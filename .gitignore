@@ -1,0 +1,36 @@
+﻿# Python & Virtual Environments
+__pycache__/
+*.py[cod]
+*.class
+*.so
+.Python
+env/
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.coverage
+
+# Node & Next.js Workbench
+node_modules/
+.next/
+out/
+build/
+dist/
+
+# Security, Enclaves & Credentials
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.cert
+aegis-secrets.json
+
+# Tooling & OS Artifacts
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
