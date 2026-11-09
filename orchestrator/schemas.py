@@ -1,11 +1,12 @@
 """
 AEGIS-0 Domain Schemas & Type System
 Defines core representations for model tiers, pricing, AST nodes,
-financial ledger budget states, pre-flight cost estimates, and action approvals.
+financial ledger budget states, pre-flight cost estimates, action approvals,
+circuit breaker states, and orchestration payloads.
 """
 
 from enum import Enum
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 
 
@@ -67,7 +68,7 @@ class BudgetState(BaseModel):
     cumulative_cost_usd: float = 0.0
     cumulative_tokens: int = 0
     is_halted: bool = False
-    recovery_checkpoint: Optional[Dict] = None
+    recovery_checkpoint: Optional[Dict[str, Any]] = None
 
 
 class PreFlightCostEstimate(BaseModel):
@@ -100,3 +101,117 @@ class ActionApprovalRequest(BaseModel):
     hmac_token: str
     is_quarantined: bool = True
     is_approved: bool = False
+
+
+class CircuitBreakerState(str, Enum):
+    CLOSED = "closed"
+    OPEN = "open"
+    HALF_OPEN = "half_open"
+
+
+class FailoverEvent(BaseModel):
+    """
+    Telemetry event capturing circuit-breaker provider switch.
+    """
+    timestamp: str
+    from_model: str
+    to_model: str
+    from_tier: ModelTier
+    to_tier: ModelTier
+    status_code: int
+    latency_ms: float
+    reason: str
+
+
+class BifrostCompletionResponse(BaseModel):
+    """
+    Canonical response from Bifrost AI Gateway / local enclave.
+    """
+    id: str
+    model: str
+    tier: ModelTier
+    content: str
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    failover_occurred: bool = False
+    failover_chain: List[str] = Field(default_factory=list)
+    latency_ms: float = 0.0
+    cached: bool = False
+
+
+class FreshnessClaimVerification(BaseModel):
+    """
+    Verification record for extracted SDK/API version claim.
+    """
+    claim: str
+    freshness_score: float
+    is_stale: bool
+    status: str  # "FRESH" | "STALE"
+    delta_t_days: float
+    semantic_agreement: float
+    deprecation_indicator: int
+    sources: List[Dict[str, Any]] = Field(default_factory=list)
+    documentation_snippets: List[str] = Field(default_factory=list)
+    patch: Optional[Dict[str, Any]] = None
+
+
+class OrchestrateRequest(BaseModel):
+    """
+    Master request payload for AEGIS-0 Orchestrator.
+    """
+    session_id: str = "default_session"
+    user_id: str = "default_user"
+    prompt: str
+    repository_path: Optional[str] = None
+    file_context: Optional[Dict[str, str]] = None
+    target_tier: Optional[ModelTier] = ModelTier.TIER_2_FRONTIER
+    budget_limit_usd: Optional[float] = None
+    proposed_action: Optional[str] = None  # e.g., "write_file", "apply_diff", "exec_shell", "read_file"
+    proposed_target: Optional[str] = None
+
+
+class OrchestrateResponse(BaseModel):
+    """
+    Master response payload from AEGIS-0 Orchestrator.
+    """
+    session_id: str
+    status: str  # "SUCCESS" | "QUARANTINED" | "HALTED"
+    model_used: str
+    model_tier: ModelTier
+    failover_occurred: bool = False
+    failover_chain: List[str] = Field(default_factory=list)
+    latency_ms: float = 0.0
+    raw_tokens: int = 0
+    pruned_tokens: int = 0
+    tokens_saved: int = 0
+    compression_ratio: float = 0.0
+    cost_usd: float = 0.0
+    budget_remaining_usd: float = 0.0
+    privacy_tainted: bool = False
+    airgap_locked: bool = False
+    generated_code: str = ""
+    original_code: Optional[str] = None
+    freshness_verifications: List[Dict[str, Any]] = Field(default_factory=list)
+    action_quarantine: Optional[ActionApprovalRequest] = None
+    recovery_checkpoint: Optional[Dict[str, Any]] = None
+
+
+class ChaosInjectRequest(BaseModel):
+    """
+    Payload to trigger live circuit-breaker failover chaos testing.
+    """
+    status_code: int = 429
+    target_model: Optional[str] = None
+
+
+class ActionApproveRequest(BaseModel):
+    """
+    Cryptographic action approval request payload.
+    """
+    action_id: str
+    hmac_token: str
+    payload: str
+    target_path: Optional[str] = None
+    diff_payload: Optional[str] = None
+    secret_key: Optional[str] = None
