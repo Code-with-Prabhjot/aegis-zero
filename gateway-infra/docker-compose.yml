@@ -1,0 +1,62 @@
+version: "3.8"
+
+services:
+  bifrost-gateway:
+    image: maximhq/bifrost:latest
+    container_name: aegis-bifrost-gateway
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - OLLAMA_ENCLAVE_URL=http://ollama-enclave:11434
+      - LOG_LEVEL=info
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/v1/models || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    depends_on:
+      redis:
+        condition: service_healthy
+      ollama-enclave:
+        condition: service_started
+    networks:
+      - aegis-public
+      - aegis-internal
+
+  redis:
+    image: redis:7-alpine
+    container_name: aegis-redis-cache
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - aegis-internal
+
+  ollama-enclave:
+    image: ollama/ollama:latest
+    container_name: aegis-ollama-enclave
+    restart: unless-stopped
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+    volumes:
+      - ollama-data:/root/.ollama
+    # Strictly bound to isolated aegis-internal network (Zero WAN / egress exposure)
+    networks:
+      - aegis-internal
+
+networks:
+  aegis-public:
+    driver: bridge
+  aegis-internal:
+    internal: true
+
+volumes:
+  ollama-data:
