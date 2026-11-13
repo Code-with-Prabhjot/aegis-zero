@@ -1,13 +1,12 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
 import { QuarantinedAction } from "@/types";
 import {
   ShieldAlert,
   ShieldCheck,
   Mic,
-  MicOff,
   Volume2,
   FileDiff,
   CheckCircle2,
@@ -15,6 +14,7 @@ import {
   Unlock,
   Radio,
   FileCode,
+  Sparkles,
 } from "lucide-react";
 
 // Dynamically import Monaco DiffEditor with SSR disabled
@@ -23,10 +23,10 @@ const DiffEditor = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className="w-full h-full min-h-[220px] bg-[#0d1117] flex items-center justify-center text-xs font-mono text-slate-500">
+      <div className="w-full h-full min-h-[240px] bg-[#090614] flex items-center justify-center text-xs font-mono text-purple-300/60">
         <div className="flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-brandCyan animate-ping" />
-          Loading Monaco Diff Inspector...
+          <span className="w-2 h-2 rounded-full bg-cosmicFuchsia animate-ping" />
+          <span>Initializing Monaco Diff Inspector [AEGIS-COSMIC]...</span>
         </div>
       </div>
     ),
@@ -49,6 +49,20 @@ export function Panel4_MonacoVoiceGate({
     12, 28, 45, 20, 60, 35, 75, 40, 25, 55, 30, 15,
   ]);
 
+  // Ref to hold the mounted Monaco DiffEditor instance
+  const diffEditorRef = useRef<any>(null);
+
+  // Safely reset DiffEditor model on unmount to prevent TextModel disposed error
+  useEffect(() => {
+    return () => {
+      try {
+        diffEditorRef.current?.setModel(null);
+      } catch {
+        // Safe disposal fallback
+      }
+    };
+  }, []);
+
   // Audio waveform animation when listening
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -63,6 +77,43 @@ export function Panel4_MonacoVoiceGate({
     }
     return () => clearInterval(interval);
   }, [isListening]);
+
+  // Define custom Monaco theme blending seamlessly into the cosmic glass UI
+  const handleBeforeMount = (monaco: any) => {
+    monaco.editor.defineTheme("aegis-cosmic", {
+      base: "vs-dark",
+      inherit: true,
+      rules: [
+        { token: "", background: "090614", foreground: "f3eaff" },
+        { token: "keyword", foreground: "c084fc", fontStyle: "bold" },
+        { token: "string", foreground: "34d399" },
+        { token: "comment", foreground: "8b7fa8", fontStyle: "italic" },
+        { token: "number", foreground: "38bdf8" },
+        { token: "function", foreground: "f472b6" },
+        { token: "type", foreground: "a78bfa" },
+        { token: "identifier", foreground: "e9d5ff" },
+      ],
+      colors: {
+        "editor.background": "#090614",
+        "editorGutter.background": "#090614",
+        "editor.lineHighlightBackground": "#1a1033",
+        "editorLineNumber.foreground": "#5c4a7e",
+        "editorLineNumber.activeForeground": "#d946ef",
+        "editor.selectionBackground": "#8b5cf633",
+        "editor.inactiveSelectionBackground": "#8b5cf61a",
+        "diffEditor.insertedTextBackground": "#10b98124",
+        "diffEditor.removedTextBackground": "#f43f5e24",
+        "diffEditor.insertedLineBackground": "#10b98114",
+        "diffEditor.removedLineBackground": "#f43f5e14",
+        "diffEditorGutter.insertedLineBackground": "#10b98135",
+        "diffEditorGutter.removedLineBackground": "#f43f5e35",
+        "diffEditor.border": "#8b5cf625",
+        "scrollbarSlider.background": "#8b5cf620",
+        "scrollbarSlider.hoverBackground": "#8b5cf640",
+        "scrollbarSlider.activeBackground": "#8b5cf660",
+      },
+    });
+  };
 
   // Simulated Voice Approval Gate
   const handleToggleVoice = () => {
@@ -88,32 +139,37 @@ export function Panel4_MonacoVoiceGate({
     }
   };
 
-  const isQuarantined = quarantinedAction?.is_quarantined && !quarantinedAction?.is_approved && !voiceApproved;
+  const isQuarantined =
+    quarantinedAction?.is_quarantined &&
+    !quarantinedAction?.is_approved &&
+    !voiceApproved;
 
   return (
     <div
-      className={`flex flex-col h-full bg-surface border rounded-lg overflow-hidden shadow-lg transition-colors ${
+      className={`flex flex-col h-full bg-[#0d081c]/75 backdrop-blur-xl border rounded-2xl overflow-hidden transition-all duration-300 ${
         isQuarantined
-          ? "border-brandRose/70 shadow-[0_0_15px_rgba(244,63,94,0.15)]"
-          : "border-brandGreen/60 shadow-[0_0_15px_rgba(16,185,129,0.15)]"
+          ? "border-rose-500/40 shadow-[0_0_30px_rgba(244,63,94,0.18)]"
+          : "border-purple-500/25 shadow-[0_0_30px_rgba(139,92,246,0.1)]"
       }`}
     >
       {/* Panel Header */}
-      <div className="flex items-center justify-between px-3.5 py-2.5 bg-surfaceHover/80 border-b border-borderDark">
-        <div className="flex items-center gap-2">
-          <FileDiff className="w-4 h-4 text-brandCyan" />
-          <h2 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-100">
-            Panel 4 // Monaco Diff Inspector &amp; Omnidimension Voice Gate
+      <div className="flex items-center justify-between px-4 py-2.5 bg-[#140b2b]/70 border-b border-purple-500/20">
+        <div className="flex items-center gap-2.5">
+          <div className="w-6 h-6 rounded-lg bg-purple-500/15 border border-purple-500/30 flex items-center justify-center">
+            <FileDiff className="w-3.5 h-3.5 text-cosmicFuchsia" />
+          </div>
+          <h2 className="text-xs font-display tracking-wider text-purple-100 uppercase">
+            Monaco Diff Inspector &amp; Omnidimension Voice Gate
           </h2>
         </div>
         <div className="flex items-center gap-2">
           {isQuarantined ? (
-            <span className="flex items-center gap-1 text-[11px] font-mono px-2 py-0.5 rounded bg-red-950/80 border border-brandRose/70 text-brandRose font-semibold animate-pulse">
+            <span className="flex items-center gap-1.5 text-[11px] font-mono px-2.5 py-0.5 rounded-full bg-rose-950/80 border border-brandRose/70 text-brandRose font-semibold animate-pulse shadow-[0_0_10px_rgba(244,63,94,0.3)]">
               <ShieldAlert className="w-3.5 h-3.5 text-brandRose" />
               MUTATION QUARANTINED
             </span>
           ) : (
-            <span className="flex items-center gap-1 text-[11px] font-mono px-2 py-0.5 rounded bg-emerald-950/70 border border-brandGreen/60 text-brandGreen font-semibold">
+            <span className="flex items-center gap-1.5 text-[11px] font-mono px-2.5 py-0.5 rounded-full bg-emerald-950/70 border border-brandGreen/60 text-brandGreen font-semibold shadow-[0_0_10px_rgba(16,185,129,0.2)]">
               <ShieldCheck className="w-3.5 h-3.5 text-brandGreen" />
               HMAC APPROVED &amp; COMMITTED
             </span>
@@ -122,14 +178,20 @@ export function Panel4_MonacoVoiceGate({
       </div>
 
       {/* Main Diff Editor View */}
-      <div className="flex-1 min-h-[220px] relative bg-[#0d1117] overflow-hidden">
+      <div className="flex-1 min-h-[220px] relative bg-[#090614] overflow-hidden">
         {quarantinedAction ? (
           <DiffEditor
             height="100%"
             language="python"
             original={quarantinedAction.original_payload}
             modified={quarantinedAction.diff_payload}
-            theme="vs-dark"
+            theme="aegis-cosmic"
+            keepCurrentOriginalModel={true}
+            keepCurrentModifiedModel={true}
+            beforeMount={handleBeforeMount}
+            onMount={(editor) => {
+              diffEditorRef.current = editor;
+            }}
             options={{
               readOnly: true,
               minimap: { enabled: false },
@@ -141,15 +203,19 @@ export function Panel4_MonacoVoiceGate({
             }}
           />
         ) : (
-          <div className="flex items-center justify-center h-full text-xs font-mono text-slate-500">
-            No active diff in quarantine. Read-only commands execute autonomously.
+          <div className="flex flex-col items-center justify-center h-full text-xs font-mono text-purple-300/50 p-6 text-center space-y-2">
+            <Sparkles className="w-6 h-6 text-purple-400/30 animate-pulse" />
+            <p>No active mutation in quarantine.</p>
+            <p className="text-[11px] text-purple-400/40 max-w-sm">
+              Read-only operations execute autonomously. Sensitive file modifications and shell executions trigger zero-trust cryptographic lock.
+            </p>
           </div>
         )}
 
         {/* Floating Target File Badge */}
         {quarantinedAction && (
-          <div className="absolute top-2 right-2 flex items-center gap-1.5 px-2.5 py-1 rounded bg-black/80 backdrop-blur-md border border-slate-700 text-[10px] font-mono text-slate-300">
-            <FileCode className="w-3 h-3 text-brandCyan" />
+          <div className="absolute top-2.5 right-2.5 flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#0d081c]/90 backdrop-blur-md border border-purple-500/30 text-[10px] font-mono text-purple-200 shadow-lg">
+            <FileCode className="w-3 h-3 text-cosmicFuchsia" />
             <span>Target: {quarantinedAction.command_or_path}</span>
           </div>
         )}
@@ -159,22 +225,22 @@ export function Panel4_MonacoVoiceGate({
       <div
         className={`p-3.5 border-t transition-colors ${
           isQuarantined
-            ? "bg-red-950/30 border-brandRose/60"
-            : "bg-emerald-950/20 border-brandGreen/50"
+            ? "bg-rose-950/25 border-rose-500/30"
+            : "bg-[#100a24]/80 border-purple-500/20"
         }`}
       >
         <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
           {/* HMAC Token Verification Info */}
           <div className="md:col-span-7 space-y-1">
             <div className="flex items-center gap-2">
-              <span className="text-[10px] font-mono text-slate-400 uppercase">
+              <span className="text-[10px] font-mono text-purple-300/70 uppercase">
                 Cryptographic Gate:
               </span>
               <span
-                className={`text-[10px] font-mono px-1.5 py-0.2 rounded font-semibold ${
+                className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-semibold ${
                   isQuarantined
-                    ? "text-brandRose bg-red-950 border border-brandRose/50"
-                    : "text-brandGreen bg-emerald-950 border border-brandGreen/50"
+                    ? "text-brandRose bg-rose-950/80 border border-brandRose/50 shadow-[0_0_8px_rgba(244,63,94,0.25)]"
+                    : "text-brandGreen bg-emerald-950/80 border border-brandGreen/50"
                 }`}
               >
                 {isQuarantined ? "HOLD FOR APPROVAL" : "HMAC VALIDATED"}
@@ -187,23 +253,23 @@ export function Panel4_MonacoVoiceGate({
                   isQuarantined ? "text-brandRose" : "text-brandGreen"
                 }`}
               />
-              <code className="text-[11px] font-mono text-slate-300 truncate max-w-full block bg-black/50 px-2 py-0.5 rounded border border-borderDark/60">
+              <code className="text-[11px] font-mono text-purple-200 truncate max-w-full block bg-black/50 px-2 py-0.5 rounded-md border border-purple-500/20">
                 {quarantinedAction?.hmac_token || "sha256:awaiting-mutation-hash"}
               </code>
             </div>
 
-            <p className="text-[10px] text-slate-400 font-mono">
-              Zero-Trust Invariant: Read ops auto-execute. All Writes/Git/Shell are halted until cryptographic or voice sign-off.
+            <p className="text-[10px] text-purple-300/60 font-mono">
+              Zero-Trust Invariant: Read ops auto-execute. All Writes/Git/Shell halted until cryptographic or voice sign-off.
             </p>
           </div>
 
           {/* Omnidimension Voice Approval HUD & Trigger */}
           <div className="md:col-span-5 flex flex-col items-end justify-center space-y-2">
             {/* Audio Waveform + Acoustic Readout */}
-            <div className="w-full flex items-center justify-between gap-2 bg-black/60 p-2 rounded border border-borderDark/80">
-              <div className="flex items-center gap-1.5">
-                <Volume2 className="w-3.5 h-3.5 text-brandCyan flex-shrink-0" />
-                <span className="text-[10px] font-mono text-slate-300 truncate max-w-[150px]">
+            <div className="w-full flex items-center justify-between gap-2 bg-[#090614]/80 p-2 rounded-xl border border-purple-500/25">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <Volume2 className="w-3.5 h-3.5 text-cosmicFuchsia flex-shrink-0" />
+                <span className="text-[10px] font-mono text-purple-200 truncate">
                   {speechTranscript || quarantinedAction?.acoustic_prompt || "Acoustic listener standby"}
                 </span>
               </div>
@@ -215,10 +281,10 @@ export function Panel4_MonacoVoiceGate({
                     key={i}
                     className={`w-1 rounded-full transition-all duration-100 ${
                       isListening
-                        ? "bg-brandRose shadow-[0_0_6px_#f43f5e]"
+                        ? "bg-brandRose shadow-[0_0_8px_#f43f5e]"
                         : voiceApproved
-                        ? "bg-brandGreen"
-                        : "bg-slate-600"
+                        ? "bg-brandGreen shadow-[0_0_6px_#10b981]"
+                        : "bg-purple-900/60"
                     }`}
                     style={{ height: `${Math.min(20, Math.max(4, (h / 70) * 20))}px` }}
                   />
@@ -232,19 +298,19 @@ export function Panel4_MonacoVoiceGate({
               <button
                 onClick={handleToggleVoice}
                 disabled={!isQuarantined}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-mono font-semibold transition-all border shadow-sm active:scale-95 ${
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-mono font-semibold transition-all border shadow-sm active:scale-95 ${
                   !isQuarantined
-                    ? "bg-surfaceHover/50 border-slate-700 text-slate-500 cursor-default"
+                    ? "bg-purple-950/20 border-purple-900/30 text-purple-400/40 cursor-default"
                     : isListening
-                    ? "bg-brandRose text-white border-rose-400 animate-pulse shadow-[0_0_12px_#f43f5e]"
-                    : "bg-surfaceHover border-brandCyan/70 text-brandCyan hover:bg-cyan-950/40"
+                    ? "bg-brandRose text-white border-rose-400 animate-pulse shadow-[0_0_15px_#f43f5e]"
+                    : "bg-[#1a0f35] border-purple-500/40 text-purple-200 hover:border-cosmicFuchsia hover:text-white"
                 }`}
                 title="Simulate hands-free voice biometric approval via Omnidimension"
               >
                 {isListening ? (
-                  <Radio className="w-3.5 h-3.5 animate-spin" />
+                  <Radio className="w-3.5 h-3.5 animate-spin text-white" />
                 ) : (
-                  <Mic className="w-3.5 h-3.5" />
+                  <Mic className="w-3.5 h-3.5 text-cosmicFuchsia" />
                 )}
                 <span>
                   {isListening
@@ -266,10 +332,10 @@ export function Panel4_MonacoVoiceGate({
                   }
                 }}
                 disabled={!isQuarantined}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-mono font-bold transition-all border shadow-md active:scale-95 ${
+                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-mono font-bold transition-all border shadow-md active:scale-95 ${
                   !isQuarantined
-                    ? "bg-emerald-950/40 border-emerald-800 text-emerald-400 cursor-default"
-                    : "bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white border-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.3)]"
+                    ? "bg-emerald-950/30 border-emerald-900/40 text-emerald-500/50 cursor-default"
+                    : "bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 text-white border-emerald-400/60 shadow-[0_0_15px_rgba(16,185,129,0.35)]"
                 }`}
               >
                 {!isQuarantined ? (
