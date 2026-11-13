@@ -34,3 +34,4 @@ aegis-secrets.json
 .idea/
 .DS_Store
 Thumbs.db
+*.zip

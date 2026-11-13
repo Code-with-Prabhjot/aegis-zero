@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import Link from "next/link";
 import {
   ShieldAlert,
   ShieldCheck,
@@ -10,6 +11,7 @@ import {
   Lock,
   Radio,
   FileCode2,
+  ArrowLeft,
 } from "lucide-react";
 import { TelemetryState } from "@/types";
 
@@ -83,6 +85,14 @@ export function Header({
       <div className="flex flex-wrap items-center justify-between gap-3">
         {/* Brand & Mission Tag */}
         <div className="flex items-center gap-3">
+          <Link
+            href="/"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded bg-surfaceHover/90 border border-borderDark hover:border-brandCyan/60 text-slate-300 hover:text-brandCyan text-xs font-mono transition-all shadow-sm active:scale-95 group"
+            title="Return to Aegis-0 Overview & Landing Page"
+          >
+            <ArrowLeft className="w-3.5 h-3.5 text-brandCyan group-hover:-translate-x-0.5 transition-transform" />
+            <span className="hidden sm:inline">Back to Overview</span>
+          </Link>
           <div className="relative flex items-center justify-center w-9 h-9 rounded bg-brandCyan/10 border border-brandCyan/40 shadow-[0_0_12px_rgba(6,182,212,0.25)]">
             <Radio className="w-5 h-5 text-brandCyan animate-pulse" />
           </div>
