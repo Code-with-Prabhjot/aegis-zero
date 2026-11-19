@@ -202,10 +202,10 @@ async def test_bifrost_circuit_breaker_multi_model_failover_resilience():
         target_tier=ModelTier.TIER_2_FRONTIER,
     )
     assert res_healthy.failover_occurred is False
-    assert res_healthy.model == "claude-3-5-sonnet"
+    assert res_healthy.model == "claude-opus-5-5"
 
     # Inject HTTP 429 outage on primary
-    client.inject_chaos_fault(status_code=429, target_model="claude-3-5-sonnet")
+    client.inject_chaos_fault(status_code=429, target_model="claude-opus-5-5")
 
     res_failover = await client.dispatch(
         messages=[{"role": "user", "content": "Ping under chaos"}],
@@ -215,7 +215,7 @@ async def test_bifrost_circuit_breaker_multi_model_failover_resilience():
     )
 
     assert res_failover.failover_occurred is True
-    assert res_failover.model == "gpt-4o"
+    assert res_failover.model == "gpt-5.6"
     assert res_failover.latency_ms < 180.0, f"Expected failover latency <180ms, got {res_failover.latency_ms}ms"
 
     # Reset

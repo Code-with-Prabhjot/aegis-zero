@@ -136,31 +136,31 @@ def test_bifrost_circuit_breaker_failover():
 
         # Baseline call: Primary model (Claude 3.5 Sonnet) succeeds
         baseline_resp = await client.dispatch(messages=messages)
-        assert baseline_resp.model == "claude-3-5-sonnet"
+        assert baseline_resp.model == "claude-opus-5-5"
         assert baseline_resp.failover_occurred is False
-        assert client.breakers["claude-3-5-sonnet"].state == CircuitBreakerState.CLOSED
+        assert client.breakers["claude-opus-5-5"].state == CircuitBreakerState.CLOSED
 
         # Inject Chaos Fault: HTTP 429 on Claude 3.5 Sonnet
-        client.inject_chaos_fault(status_code=429, target_model="claude-3-5-sonnet")
+        client.inject_chaos_fault(status_code=429, target_model="claude-opus-5-5")
 
         # Dispatch: Should trip primary breaker and failover to GPT-4o in <180ms
         failover_resp = await client.dispatch(messages=messages)
 
         # 1. Verification of target model switch to secondary
-        assert failover_resp.model == "gpt-4o", f"Expected secondary model gpt-4o, got {failover_resp.model}"
+        assert failover_resp.model == "gpt-5.6", f"Expected secondary model gpt-5.6, got {failover_resp.model}"
         assert failover_resp.tier == ModelTier.TIER_2_FRONTIER
         assert failover_resp.failover_occurred is True
-        assert "claude-3-5-sonnet" in failover_resp.failover_chain
+        assert "claude-opus-5-5" in failover_resp.failover_chain
 
         # 2. SLA Verification: Switch must occur in < 180 ms
         assert failover_resp.latency_ms < 180.0, f"Failover SLA breached: {failover_resp.latency_ms} ms >= 180 ms"
 
         # 3. State verification: Primary breaker must be OPEN
-        assert client.breakers["claude-3-5-sonnet"].state == CircuitBreakerState.OPEN
+        assert client.breakers["claude-opus-5-5"].state == CircuitBreakerState.OPEN
         assert len(client.failover_events) >= 1
         recent_event = client.failover_events[-1]
-        assert recent_event.from_model == "claude-3-5-sonnet"
-        assert recent_event.to_model == "gpt-4o"
+        assert recent_event.from_model == "claude-opus-5-5"
+        assert recent_event.to_model == "gpt-5.6"
         assert recent_event.status_code == 429
         assert recent_event.latency_ms < 180.0
 
@@ -171,10 +171,10 @@ def test_bifrost_circuit_breaker_failover():
         # 5. Clear chaos fault and reset breakers
         client.clear_chaos_fault()
         client.reset_circuit_breakers()
-        assert client.breakers["claude-3-5-sonnet"].state == CircuitBreakerState.CLOSED
+        assert client.breakers["claude-opus-5-5"].state == CircuitBreakerState.CLOSED
 
         recovery_resp = await client.dispatch(messages=messages)
-        assert recovery_resp.model == "claude-3-5-sonnet"
+        assert recovery_resp.model == "claude-opus-5-5"
         assert recovery_resp.failover_occurred is False
 
     asyncio.run(_run())
@@ -284,7 +284,7 @@ def test_end_to_end_orchestrate_pipeline():
     # 1. Status & Routing
     assert data["session_id"] == session_id
     assert data["status"] == "QUARANTINED"
-    assert data["model_used"] in ("claude-3-5-sonnet", "gpt-4o")
+    assert data["model_used"] in ("claude-opus-5-5", "gpt-5.6")
     assert data["model_tier"] == "tier-2-frontier"
     assert data["privacy_tainted"] is False
     assert data["airgap_locked"] is False

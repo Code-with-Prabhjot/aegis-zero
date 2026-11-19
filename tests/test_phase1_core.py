@@ -26,6 +26,7 @@ if SECURITY_GATE_DIR not in sys.path:
 
 from orchestrator.schemas import (
     ModelTier,
+    ModelPricing,
     ActionCategory,
     ActionApprovalRequest,
 )
@@ -37,12 +38,25 @@ from privacy_guard import PrivacyGuard
 # ==============================================================================
 # 1. Budget Ledger Worst-Case Reservation Test
 # ==============================================================================
+# Ledger arithmetic tests pin explicit prices so they test the math,
+# independent of whichever models the registry defaults to.
+LEDGER_TEST_PRICING = {
+    ModelTier.TIER_2_FRONTIER: ModelPricing(input_per_mtok=3.00, output_per_mtok=15.00),
+    ModelTier.TIER_1_MICRO: ModelPricing(input_per_mtok=0.25, output_per_mtok=1.25),
+    ModelTier.TIER_0_LOCAL: ModelPricing(input_per_mtok=0.0, output_per_mtok=0.0),
+}
+
+
 def test_budget_ledger_worst_case_reservation():
     """
     Verifies that the pre-call calculator strictly reserves the full worst-case
     output margin (T_max_out * P_out) in advance before dispatch.
     """
-    ledger = BudgetLedger(default_user_budget_usd=0.50, default_session_budget_usd=0.10)
+    ledger = BudgetLedger(
+        pricing_registry=LEDGER_TEST_PRICING,
+        default_user_budget_usd=0.50,
+        default_session_budget_usd=0.10,
+    )
     session_id = "test-session-reservation"
     ledger.register_session(
         session_id=session_id,
@@ -98,7 +112,7 @@ def test_budget_ledger_dynamic_down_routing():
     Verifies automatic down-routing from Tier-2 Frontier to Tier-1 Micro
     when remaining balance cannot accommodate Tier-2 but can afford Tier-1.
     """
-    ledger = BudgetLedger()
+    ledger = BudgetLedger(pricing_registry=LEDGER_TEST_PRICING)
     session_id = "test-session-downroute"
     # Budget cap = $0.0150
     ledger.register_session(
@@ -133,7 +147,7 @@ def test_budget_ledger_hard_halt():
     Verifies clean hard-halt state machine activation when session budget ceiling
     is reached, producing a serialized recovery checkpoint with zero overrun.
     """
-    ledger = BudgetLedger()
+    ledger = BudgetLedger(pricing_registry=LEDGER_TEST_PRICING)
     session_id = "test-session-halt"
     # Ceiling = $0.0020
     ledger.register_session(

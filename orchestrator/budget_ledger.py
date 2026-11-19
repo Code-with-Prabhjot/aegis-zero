@@ -9,10 +9,10 @@ from typing import Dict, Optional
 from orchestrator.schemas import (
     ModelTier,
     ModelPricing,
-    DEFAULT_MODEL_PRICING,
     BudgetState,
     PreFlightCostEstimate,
 )
+from orchestrator.model_registry import TIER_PRICING as DEFAULT_MODEL_PRICING
 
 
 class BudgetLedger:
