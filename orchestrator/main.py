@@ -45,6 +45,7 @@ from orchestrator.ast_pruner import ASTPruner
 from orchestrator.budget_ledger import BudgetLedger
 from orchestrator.bifrost_client import BifrostClient
 from orchestrator.pathway_stream import StreamingASTIndex
+from orchestrator.workspace import Workspace, WorkspaceError
 from privacy_guard import PrivacyGuard
 from freshness_engine import FreshnessEngine
 from audit_trail import TamperEvidentAuditLedger
@@ -57,6 +58,11 @@ AEGIS_SECRET_KEY = os.getenv(
 
 # Quarantined actions expire if not approved within this window.
 ACTION_APPROVAL_TTL_SECONDS = int(os.getenv("AEGIS_ACTION_TTL_SECONDS", "900"))
+
+# Approved writes land in this confined workspace. Defaults to a gitignored
+# sandbox so demo approvals never overwrite the project's own source files.
+WORKSPACE_ROOT = os.getenv("AEGIS_WORKSPACE_ROOT") or os.path.join(REPO_ROOT, ".aegis-workspace")
+WRITE_ACTIONS = ("write", "write_file", "apply_diff")
 
 app = FastAPI(
     title="AEGIS-0 Orchestrator",
@@ -111,6 +117,7 @@ freshness = FreshnessEngine()
 telemetry_hub = TelemetryBroadcaster()
 audit_ledger = TamperEvidentAuditLedger()
 stream_indexer = StreamingASTIndex(pruner=pruner)
+workspace = Workspace(WORKSPACE_ROOT)
 
 # Cumulative session tracking
 total_tokens_saved_cumulative: int = 0
@@ -121,6 +128,9 @@ quarantined_diff_snapshots: Dict[str, Dict[str, Any]] = {}
 pending_action_signatures: Dict[str, Dict[str, Any]] = {}
 # Action IDs whose approval has already been consumed (replay protection).
 consumed_action_ids: set = set()
+# Writes actually applied to the workspace, for byte-exact rollback:
+# action_id -> {"target_path", "original", "patched_digest"}
+applied_writes: Dict[str, Dict[str, Any]] = {}
 
 
 @app.get("/healthz")
@@ -277,6 +287,16 @@ async def orchestrate(req: OrchestrateRequest):
         )
     elif req.budget_limit_usd is not None:
         ledger.sessions[session_id].session_limit_usd = req.budget_limit_usd
+
+    # Reject write targets outside the workspace before spending any tokens.
+    if (req.proposed_action or "").lower() in WRITE_ACTIONS and req.proposed_target:
+        try:
+            workspace.resolve(req.proposed_target)
+        except WorkspaceError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"TARGET_OUTSIDE_WORKSPACE: {exc}",
+            )
 
     # --------------------------------------------------------------------------
     # Step 1: Zero-Trust Code Privacy Scan & Air-Gap Taint Engine
@@ -559,10 +579,24 @@ async def orchestrate(req: OrchestrateRequest):
             "signed_payload": hmac_payload,
             "expires_at": expires_at,
         }
+        file_original: Optional[str] = None
+        if category == ActionCategory.WRITE:
+            try:
+                file_original = workspace.read(target_path)
+            except WorkspaceError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"TARGET_OUTSIDE_WORKSPACE: {exc}",
+                )
         quarantined_diff_snapshots[action_id] = {
+            "category": category,
             "target_path": target_path,
+            # Pre-freshness-patch model output, for the UI's before/after diff.
             "original_code": original_code or "# Original baseline",
             "patched_code": final_code,
+            # The target file's real content when quarantined (None = new file).
+            "file_original": file_original,
+            "file_original_digest": Workspace.digest(file_original),
         }
         action_status = "QUARANTINED"
 
@@ -698,6 +732,25 @@ async def approve_action(req: ActionApproveRequest):
             detail="INVALID_HMAC_SIGNATURE: Action approval signature verification failed.",
         )
 
+    snap = quarantined_diff_snapshots[req.action_id]
+    is_write = snap.get("category") == ActionCategory.WRITE
+
+    # The diff was computed against the file as it was at quarantine time. If
+    # the file changed since, applying it would silently clobber those edits.
+    if is_write:
+        current = workspace.read(snap["target_path"])
+        if Workspace.digest(current) != snap["file_original_digest"]:
+            pending_action_signatures.pop(req.action_id, None)
+            audit_ledger.append_entry(
+                event_type="HMAC_REJECTED",
+                actor="action_gate",
+                payload={"action_id": req.action_id, "reason": "TARGET_CHANGED"},
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="TARGET_CHANGED: The target file changed after this action was quarantined; re-run the request.",
+            )
+
     # Consume the approval before any side effects so it can never be replayed.
     consumed_action_ids.add(req.action_id)
     pending_action_signatures.pop(req.action_id, None)
@@ -707,20 +760,35 @@ async def approve_action(req: ActionApproveRequest):
         item.is_approved = True
         item.is_quarantined = False
 
+    written_path: Optional[str] = None
+    if is_write:
+        workspace.write(snap["target_path"], snap["patched_code"])
+        written_path = workspace.relative(snap["target_path"])
+        applied_writes[req.action_id] = {
+            "target_path": snap["target_path"],
+            "original": snap["file_original"],
+            "patched_digest": Workspace.digest(snap["patched_code"]),
+        }
+
     # Record snapshot in audit ledger for atomic rollback
-    snap = quarantined_diff_snapshots[req.action_id]
     audit_ledger.record_diff_snapshot(
         action_id=req.action_id,
         target_path=snap["target_path"],
-        original_code=snap["original_code"],
+        original_code=snap["file_original"] if snap["file_original"] is not None else "",
         patched_code=snap["patched_code"],
         actor="user_operator",
     )
 
+    exec_status = "EXECUTED" if is_write else "APPROVED"
     audit_ledger.append_entry(
         event_type="HMAC_APPROVED",
         actor="user_operator",
-        payload={"action_id": req.action_id, "status": "EXECUTED"},
+        payload={
+            "action_id": req.action_id,
+            "status": exec_status,
+            "written_path": written_path,
+            "content_sha256": Workspace.digest(snap["patched_code"]) if is_write else None,
+        },
     )
 
     approval_event = {
@@ -733,7 +801,11 @@ async def approve_action(req: ActionApproveRequest):
     return {
         "approved": True,
         "action_id": req.action_id,
-        "status": "EXECUTED",
+        # Writes are applied to the workspace. Shell/git approvals are recorded
+        # but never executed by the orchestrator.
+        "status": exec_status,
+        "written_path": written_path,
+        "workspace_root": workspace.root if is_write else None,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -752,7 +824,22 @@ async def rollback_action():
     Reverts the last approved diff snapshot in memory and logs a signed
     ACTION_ROLLED_BACK entry to the audit ledger.
     """
+    last = audit_ledger.peek_last_diff()
+    applied = applied_writes.get(last["action_id"]) if last else None
+    if applied is not None:
+        current = workspace.read(applied["target_path"])
+        if Workspace.digest(current) != applied["patched_digest"]:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="TARGET_MODIFIED_SINCE_APPLY: The file was edited after this action was applied; refusing to overwrite those edits.",
+            )
+
     rollback_res = audit_ledger.rollback_last_diff(actor="user_operator")
+    file_restored = False
+    if rollback_res and applied is not None:
+        workspace.restore(applied["target_path"], applied["original"])
+        applied_writes.pop(last["action_id"], None)
+        file_restored = True
     is_valid, msg = audit_ledger.verify_chain_integrity()
 
     if not rollback_res:
@@ -781,6 +868,7 @@ async def rollback_action():
         "action_id": rollback_res["snapshot"]["action_id"],
         "target_path": rollback_res["snapshot"]["target_path"],
         "reverted_record": rollback_res["reverted_record"],
+        "file_restored": file_restored,
         "chain_valid": is_valid,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }

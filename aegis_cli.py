@@ -38,6 +38,7 @@ from orchestrator.ast_pruner import ASTPruner
 from orchestrator.budget_ledger import BudgetLedger
 from orchestrator.bifrost_client import BifrostClient
 from orchestrator.pathway_stream import StreamingASTIndex
+from orchestrator.workspace import Workspace, WorkspaceError
 from privacy_guard import PrivacyGuard
 from freshness_engine import FreshnessEngine
 from audit_trail import TamperEvidentAuditLedger
@@ -323,7 +324,19 @@ async def run_cli(
             actual_output_tokens=dispatch_res.completion_tokens,
             tier=dispatch_res.tier,
         )
-        console.print(f"[bold green]✓ HMAC-SHA256 VERIFIED: Action {action_id} safely executed on main.[/bold green]\n")
+        workspace = Workspace(
+            os.getenv("AEGIS_WORKSPACE_ROOT") or os.path.join(REPO_ROOT, ".aegis-workspace")
+        )
+        try:
+            written = workspace.write(target_file, final_code)
+        except WorkspaceError as exc:
+            console.print(f"[bold red]✗ WRITE REFUSED: {exc}[/bold red]\n")
+            return 1
+        console.print(
+            f"[bold green]✓ HMAC-SHA256 VERIFIED: Action {action_id} written to {written}[/bold green]\n"
+            f"[dim]Workspace root: {workspace.root} "
+            f"(set AEGIS_WORKSPACE_ROOT to apply to a real checkout)[/dim]\n"
+        )
     else:
         console.print("[bold red]✗ CRYPTOGRAPHIC VERIFICATION FAILED: Forged or invalid HMAC signature.[/bold red]\n")
         return 1
