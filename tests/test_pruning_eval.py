@@ -9,7 +9,7 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from orchestrator.pruning_eval import EVAL_CASES, body_present, run_eval, _symbol_sources
+from evals.pruning_eval import EVAL_CASES, body_present, run_eval, _symbol_sources
 
 
 def test_body_present_ignores_indentation_but_not_stubs():
