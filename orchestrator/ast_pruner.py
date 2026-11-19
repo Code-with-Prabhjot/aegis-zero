@@ -312,6 +312,44 @@ class ASTPruner:
         top = max(raw_scores.values()) or 1.0
         return {nid: sc / top for nid, sc in raw_scores.items()}
 
+    EXPAND_REQUEST = re.compile(r"^\s*EXPAND:\s*([A-Za-z_][A-Za-z0-9_.]*)\s*$", re.MULTILINE)
+
+    def parse_expand_requests(self, text: str, limit: int = 3) -> List[str]:
+        """Symbol names a model asked to expand via `EXPAND: <name>` lines."""
+        seen: List[str] = []
+        for name in self.EXPAND_REQUEST.findall(text or ""):
+            if name not in seen:
+                seen.append(name)
+        return seen[:limit]
+
+    def expand_symbols(
+        self,
+        nodes: List[ASTNode],
+        names: List[str],
+        exclude_ids: Optional[Set[str]] = None,
+    ) -> List[Dict[str, object]]:
+        """
+        Returns full source for requested stubbed symbols (exact name, node_id,
+        or method short name). Symbols already shown in full are skipped.
+        """
+        exclude_ids = exclude_ids or set()
+        out: List[Dict[str, object]] = []
+        taken: Set[str] = set()
+        for name in names:
+            for n in nodes:
+                if n.node_type in ("import", "fallback") or n.node_id in exclude_ids or n.node_id in taken:
+                    continue
+                if self._matches_seed(n, name):
+                    taken.add(n.node_id)
+                    out.append({
+                        "symbol": n.name,
+                        "node_id": n.node_id,
+                        "file_path": n.file_path,
+                        "source": n.raw_source,
+                        "tokens": n.token_cost,
+                    })
+        return out
+
     def generate_1line_stub(
         self,
         node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef,
