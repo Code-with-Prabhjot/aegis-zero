@@ -45,6 +45,26 @@ from audit_trail import TamperEvidentAuditLedger
 
 AEGIS_SECRET_KEY = os.getenv("AEGIS_SECRET_KEY", "aegis-institutional-zero-trust-secret-2026")
 
+
+def _ensure_utf8_stdio() -> None:
+    """
+    Windows consoles (and subprocess pipes) default to a legacy code page such as
+    cp1252, which cannot encode the status glyphs used in CLI output and crashes
+    with UnicodeEncodeError. Keep the stream's encoding (so whatever reads the
+    pipe still decodes it correctly) but replace unencodable glyphs instead of
+    raising.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(errors="replace")
+        except (ValueError, OSError):
+            pass
+
+
+_ensure_utf8_stdio()
 console = Console()
 
 
