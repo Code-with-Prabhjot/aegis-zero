@@ -10,6 +10,7 @@ Executes full institutional pipeline:
 import argparse
 import asyncio
 import hashlib
+import json
 import os
 import sys
 import uuid
@@ -39,6 +40,7 @@ from orchestrator.budget_ledger import BudgetLedger
 from orchestrator.bifrost_client import BifrostClient
 from orchestrator.pathway_stream import StreamingASTIndex
 from orchestrator.workspace import Workspace, WorkspaceError
+from orchestrator.receipts import build_receipt, render_html
 from privacy_guard import PrivacyGuard
 from freshness_engine import FreshnessEngine
 from audit_trail import TamperEvidentAuditLedger
@@ -85,6 +87,7 @@ async def run_cli(
     auto_approve: bool = False,
     proposed_action: str = "write_file",
     proposed_target: Optional[str] = None,
+    receipt_path: Optional[str] = None,
 ) -> int:
     print_banner()
 
@@ -185,6 +188,7 @@ async def run_cli(
         compression_ratio = ast_stats["compression_ratio"]
         selected_count = len(ast_stats.get("selected_nodes", []))
         stubbed_count = len(ast_stats.get("stubbed_nodes", []))
+        selected_names = list(ast_stats.get("selected_nodes", []))
     else:
         prompt_t = pruner.count_tokens(prompt)
         raw_tokens = prompt_t
@@ -194,6 +198,7 @@ async def run_cli(
         selected_count = 1
         stubbed_count = 0
         hybrid_code = prompt
+        selected_names = []
 
     # AST Token Compression Table
     t_ast = Table(title="[STAGE 1] Submodular Knapsack AST Call-Graph Pruner", border_style="cyan")
@@ -273,7 +278,12 @@ async def run_cli(
             score = v["freshness_score"]
             is_stale = v["is_stale"]
             status_text = "[bold red]STALE (< 70)[/bold red]" if is_stale else "[bold green]FRESH (>= 70)[/bold green]"
-            patch_text = f"Patched -> {v['patch']['replacement_pattern'][:40]}" if v.get("patch") else "Verified Contemporary"
+            replacement = (v.get("patch") or {}).get("replacement_pattern")
+            patch_text = (
+                f"Patched -> {replacement[:40]}" if replacement
+                else "Flagged: manual review" if v.get("patch")
+                else "Verified Contemporary"
+            )
             t_fresh.add_row(v["claim"], f"{score:.1f}/100", status_text, patch_text)
     else:
         t_fresh.add_row("Syntax Core APIs", "98.5/100", "[bold green]FRESH (>= 70)[/bold green]", "Zero Stale Methods")
@@ -304,6 +314,42 @@ async def run_cli(
             border_style="yellow",
         )
     )
+
+    if receipt_path:
+        tier_price = ledger.pricing.get(dispatch_res.tier)
+        receipt = build_receipt(
+            session_id=session_id,
+            prompt=prompt,
+            status="DRY_RUN" if dry_run else "QUARANTINED",
+            model_used=dispatch_res.model,
+            model_tier=dispatch_res.tier.value,
+            failover_chain=dispatch_res.failover_chain,
+            raw_tokens=raw_tokens,
+            context_tokens=pruned_tokens,
+            expansion_tokens=0,
+            cached_prompt_tokens=dispatch_res.cached_prompt_tokens,
+            cost_usd=ledger._calculate_bound_cost(
+                dispatch_res.prompt_tokens, dispatch_res.completion_tokens, dispatch_res.tier,
+                dispatch_res.cached_prompt_tokens,
+            ),
+            unpruned_extra_cost_usd=(
+                max(0, raw_tokens - pruned_tokens) * tier_price.input_per_mtok / 1_000_000.0
+                if tier_price else 0.0
+            ),
+            selected_symbols=selected_names,
+            stubbed_count=stubbed_count,
+            expansions=[],
+            freshness=verifications,
+            action={"action_id": action_id, "category": "write", "target": target_file,
+                    "status": "DRY_RUN" if dry_run else "QUARANTINED"},
+            privacy_tainted=privacy_tainted,
+            audit_head=None,
+            audit_chain_valid=None,
+        )
+        out = render_html(receipt) if receipt_path.lower().endswith(".html") else json.dumps(receipt, indent=2)
+        with open(receipt_path, "w", encoding="utf-8") as fh:
+            fh.write(out)
+        console.print(f"[dim]Receipt written to {os.path.abspath(receipt_path)}[/dim]")
 
     if dry_run:
         console.print("[bold green]✓ [DRY-RUN MODE]: Pipeline verified successfully. Zero mutations committed.[/bold green]\n")
@@ -600,6 +646,12 @@ def main():
         help="Target file path for patch action",
     )
     parser.add_argument(
+        "--receipt",
+        default=None,
+        metavar="PATH",
+        help="Write a token receipt for this run (JSON, or HTML if PATH ends in .html)",
+    )
+    parser.add_argument(
         "--benchmark",
         action="store_true",
         help="Execute submodular knapsack AST token compression benchmarks across modules",
@@ -641,6 +693,7 @@ def main():
             auto_approve=args.yes,
             proposed_action=args.action,
             proposed_target=args.target,
+            receipt_path=args.receipt,
         )
     )
     sys.exit(code)

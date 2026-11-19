@@ -186,6 +186,8 @@ class OrchestrateResponse(BaseModel):
     Master response payload from AEGIS-0 Orchestrator.
     """
     session_id: str
+    # Fetch the run's token receipt at /api/receipts/{run_id}
+    run_id: Optional[str] = None
     status: str  # "SUCCESS" | "QUARANTINED" | "HALTED"
     model_used: str
     model_tier: ModelTier
