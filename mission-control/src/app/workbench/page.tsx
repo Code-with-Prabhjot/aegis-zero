@@ -31,6 +31,8 @@ export default function MissionControlPage() {
     injectConfidentialTaint,
     runLiveAgent,
     testInjectionAttack,
+    exportAuditBundle,
+    rollbackLastDiff,
   } = useOrchestrator();
 
   // Keyboard shortcut listener for switching stages via keys 1, 2, 3
@@ -201,6 +203,8 @@ export default function MissionControlPage() {
               <Panel4_MonacoVoiceGate
                 quarantinedAction={telemetry.quarantinedAction}
                 onApproveAction={approveAction}
+                onExportAudit={exportAuditBundle}
+                onRollbackDiff={rollbackLastDiff}
               />
             </div>
           </div>

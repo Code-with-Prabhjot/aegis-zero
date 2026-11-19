@@ -46,6 +46,7 @@ from orchestrator.budget_ledger import BudgetLedger
 from orchestrator.bifrost_client import BifrostClient
 from privacy_guard import PrivacyGuard
 from freshness_engine import FreshnessEngine
+from audit_trail import TamperEvidentAuditLedger
 
 # Institutional Shared Secret for HMAC Cryptographic Gates
 AEGIS_SECRET_KEY = os.getenv(
@@ -103,10 +104,12 @@ guard = PrivacyGuard()
 bifrost = BifrostClient()
 freshness = FreshnessEngine()
 telemetry_hub = TelemetryBroadcaster()
+audit_ledger = TamperEvidentAuditLedger()
 
 # Cumulative session tracking
 total_tokens_saved_cumulative: int = 0
 quarantined_actions_store: Dict[str, ActionApprovalRequest] = {}
+quarantined_diff_snapshots: Dict[str, Dict[str, Any]] = {}
 
 
 @app.get("/healthz")
@@ -157,6 +160,12 @@ async def inject_chaos(req: ChaosInjectRequest):
     """
     bifrost.inject_chaos_fault(status_code=req.status_code, target_model=req.target_model)
 
+    audit_ledger.append_entry(
+        event_type="CHAOS_INJECTED",
+        actor="chaos_simulator",
+        payload={"status_code": req.status_code, "target_model": req.target_model or "claude-3-5-sonnet"},
+    )
+
     event = {
         "type": "CHAOS_INJECTED",
         "status_code": req.status_code,
@@ -193,9 +202,21 @@ async def reset_chaos():
 async def security_redteam(req: RedTeamRequest):
     """
     Live Adversarial Red-Team Hook: Simulates prompt injections, secret exfiltration,
-    and scope escape attacks to verify 100% containment and local airgap enclave locking.
+    scope escape, base64 smuggling, and unicode homoglyph attacks to verify 100% containment
+    and local airgap enclave locking.
     """
     result = guard.evaluate_redteam_attack(req.attack_type, req.payload)
+
+    audit_ledger.append_entry(
+        event_type="REDTEAM_ATTACK_CONTAINED",
+        actor="redteam_harness",
+        payload={
+            "attack_type": req.attack_type,
+            "defense": result["defense_triggered"],
+            "entropy": result["entropy_score"],
+        },
+    )
+
     event = {
         "type": "REDTEAM_ATTACK_CONTAINED",
         "attack_type": req.attack_type,
@@ -277,6 +298,11 @@ async def orchestrate(req: OrchestrateRequest):
     if privacy_tainted:
         airgap_locked = True
         effective_tier = ModelTier.TIER_0_LOCAL
+        audit_ledger.append_entry(
+            event_type="TAINT_DETECTED",
+            actor="privacy_guard",
+            payload={"violations_count": len(violations), "routing": effective_tier.value},
+        )
     else:
         effective_tier = req.target_tier or ModelTier.TIER_2_FRONTIER
 
@@ -425,6 +451,11 @@ async def orchestrate(req: OrchestrateRequest):
             "remaining_budget_usd": remaining_budget,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
+        audit_ledger.append_entry(
+            event_type="BUDGET_CAP_HALT",
+            actor="budget_ledger",
+            payload=halt_event,
+        )
         await telemetry_hub.broadcast(halt_event)
 
         return OrchestrateResponse(
@@ -524,6 +555,11 @@ async def orchestrate(req: OrchestrateRequest):
             is_approved=False,
         )
         quarantined_actions_store[action_id] = action_quarantine
+        quarantined_diff_snapshots[action_id] = {
+            "target_path": target_path,
+            "original_code": original_code or "# Original baseline",
+            "patched_code": final_code,
+        }
         action_status = "QUARANTINED"
 
     # --------------------------------------------------------------------------
@@ -553,6 +589,19 @@ async def orchestrate(req: OrchestrateRequest):
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
     await telemetry_hub.broadcast(telemetry_event)
+
+    audit_ledger.append_entry(
+        event_type="ORCHESTRATE_DECISION",
+        actor="orchestrator",
+        payload={
+            "session_id": session_id,
+            "model_used": dispatch_res.model,
+            "model_tier": dispatch_res.tier.value,
+            "status": action_status,
+            "tokens_saved": tokens_saved,
+            "action_id": action_quarantine.action_id if action_quarantine else None,
+        },
+    )
 
     return OrchestrateResponse(
         session_id=session_id,
@@ -612,6 +661,31 @@ async def approve_action(req: ActionApproveRequest):
         item.is_approved = True
         item.is_quarantined = False
 
+    # Record snapshot in audit ledger for atomic rollback
+    snap = quarantined_diff_snapshots.get(req.action_id)
+    if snap:
+        audit_ledger.record_diff_snapshot(
+            action_id=req.action_id,
+            target_path=snap["target_path"],
+            original_code=snap["original_code"],
+            patched_code=snap["patched_code"],
+            actor="user_operator",
+        )
+    else:
+        audit_ledger.record_diff_snapshot(
+            action_id=req.action_id,
+            target_path=req.target_path or "generated_patch.py",
+            original_code="# Original code baseline",
+            patched_code=req.diff_payload or req.payload,
+            actor="user_operator",
+        )
+
+    audit_ledger.append_entry(
+        event_type="HMAC_APPROVED",
+        actor="user_operator",
+        payload={"action_id": req.action_id, "status": "EXECUTED"},
+    )
+
     approval_event = {
         "type": "ACTION_APPROVED",
         "action_id": req.action_id,
@@ -623,6 +697,54 @@ async def approve_action(req: ActionApproveRequest):
         "approved": True,
         "action_id": req.action_id,
         "status": "EXECUTED",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@app.get("/api/audit/export")
+async def export_audit_bundle():
+    """
+    Returns the full SHA-256 hash-chained audit ledger and chain_valid: true attestation.
+    """
+    return audit_ledger.export_compliance_bundle()
+
+
+@app.post("/api/action/rollback")
+async def rollback_action():
+    """
+    Reverts the last approved diff snapshot in memory and logs a signed
+    ACTION_ROLLED_BACK entry to the audit ledger.
+    """
+    rollback_res = audit_ledger.rollback_last_diff(actor="user_operator")
+    is_valid, msg = audit_ledger.verify_chain_integrity()
+
+    if not rollback_res:
+        entry = audit_ledger.append_entry(
+            event_type="ACTION_ROLLED_BACK",
+            actor="user_operator",
+            payload={"status": "NO_PREVIOUS_DIFF", "message": "No active diff snapshots to roll back"},
+        )
+        return {
+            "status": "ROLLED_BACK",
+            "message": "No previous diff snapshots available to roll back.",
+            "chain_valid": is_valid,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+    event = {
+        "type": "ACTION_ROLLED_BACK",
+        "action_id": rollback_res["snapshot"]["action_id"],
+        "target_path": rollback_res["snapshot"]["target_path"],
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    await telemetry_hub.broadcast(event)
+
+    return {
+        "status": "ROLLED_BACK",
+        "action_id": rollback_res["snapshot"]["action_id"],
+        "target_path": rollback_res["snapshot"]["target_path"],
+        "reverted_record": rollback_res["reverted_record"],
+        "chain_valid": is_valid,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 

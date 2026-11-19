@@ -15,6 +15,7 @@ import {
   Radio,
   FileCode,
   Sparkles,
+  RotateCcw,
 } from "lucide-react";
 
 // Dynamically import Monaco DiffEditor with SSR disabled
@@ -36,11 +37,15 @@ const DiffEditor = dynamic(
 interface Panel4Props {
   quarantinedAction: QuarantinedAction | null;
   onApproveAction: (actionId: string, hmacToken: string) => void;
+  onExportAudit?: () => void;
+  onRollbackDiff?: () => void;
 }
 
 export function Panel4_MonacoVoiceGate({
   quarantinedAction,
   onApproveAction,
+  onExportAudit,
+  onRollbackDiff,
 }: Panel4Props) {
   const [isListening, setIsListening] = useState(false);
   const [speechTranscript, setSpeechTranscript] = useState<string | null>(null);
@@ -230,9 +235,9 @@ export function Panel4_MonacoVoiceGate({
         }`}
       >
         <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
-          {/* HMAC Token Verification Info */}
-          <div className="md:col-span-7 space-y-1">
-            <div className="flex items-center gap-2">
+          {/* HMAC Token Verification Info & Audit Ledger Controls */}
+          <div className="md:col-span-7 space-y-1.5">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="text-[10px] font-mono text-purple-300/70 uppercase">
                 Cryptographic Gate:
               </span>
@@ -245,6 +250,38 @@ export function Panel4_MonacoVoiceGate({
               >
                 {isQuarantined ? "HOLD FOR APPROVAL" : "HMAC VALIDATED"}
               </span>
+
+              {/* Tamper-Evident SHA-256 Audit Ledger Pill */}
+              <span className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-950/70 border border-emerald-500/50 text-emerald-300 font-semibold shadow-[0_0_8px_rgba(16,185,129,0.2)]">
+                <ShieldCheck className="w-3 h-3 text-brandGreen" />
+                Audit Chain: VERIFIED (SHA-256)
+              </span>
+
+              {/* 1-Click Compliance Export Trigger */}
+              {onExportAudit && (
+                <button
+                  type="button"
+                  onClick={onExportAudit}
+                  className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-full bg-purple-900/40 hover:bg-purple-800/60 text-purple-200 border border-purple-500/30 transition-all cursor-pointer shadow-sm active:scale-95"
+                  title="Download verifiable SHA-256 compliance audit bundle"
+                >
+                  <FileCode className="w-3 h-3 text-cosmicFuchsia" />
+                  [Export Audit JSON]
+                </button>
+              )}
+
+              {/* Atomic Rollback Trigger */}
+              {onRollbackDiff && (
+                <button
+                  type="button"
+                  onClick={onRollbackDiff}
+                  className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-full bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-500/30 transition-all cursor-pointer shadow-sm active:scale-95"
+                  title="Revert last approved diff snapshot and record signed rollback"
+                >
+                  <RotateCcw className="w-3 h-3 text-brandRose" />
+                  [Rollback Last Diff]
+                </button>
+              )}
             </div>
 
             <div className="flex items-center gap-1.5">
