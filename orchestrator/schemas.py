@@ -164,6 +164,8 @@ class OrchestrateRequest(BaseModel):
     user_id: str = "default_user"
     prompt: str
     repository_path: Optional[str] = None
+    repo_path: Optional[str] = None
+    max_token_budget: int = 8000
     file_context: Optional[Dict[str, str]] = None
     target_tier: Optional[ModelTier] = ModelTier.TIER_2_FRONTIER
     budget_limit_usd: Optional[float] = None
@@ -195,6 +197,26 @@ class OrchestrateResponse(BaseModel):
     freshness_verifications: List[Dict[str, Any]] = Field(default_factory=list)
     action_quarantine: Optional[ActionApprovalRequest] = None
     recovery_checkpoint: Optional[Dict[str, Any]] = None
+    ast_nodes: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class RedTeamRequest(BaseModel):
+    """
+    Payload for adversarial red-team simulation attack vector.
+    """
+    attack_type: str = Field(..., description="prompt_injection | secret_exfiltration | scope_escape")
+    payload: str = Field(..., description="Adversarial attack payload or probe string")
+
+
+class RedTeamResponse(BaseModel):
+    """
+    Containment verification response from Zero-Trust Red-Team Engine.
+    """
+    blocked: bool = True
+    defense_triggered: str
+    entropy_score: float
+    airgap_enforced: bool = True
+    audit_log: str
 
 
 class ChaosInjectRequest(BaseModel):
