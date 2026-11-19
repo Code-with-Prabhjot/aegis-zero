@@ -15,13 +15,17 @@ pruner keeps whole classes or individual methods.
 
 import ast
 import os
+import sys
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Tuple
 
-from orchestrator.ast_pruner import ASTPruner
-from orchestrator.pathway_stream import StreamingASTIndex
-
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
+
+from orchestrator.ast_pruner import ASTPruner  # noqa: E402
+from orchestrator.pathway_stream import StreamingASTIndex  # noqa: E402
+
 
 
 @dataclass

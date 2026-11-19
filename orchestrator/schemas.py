@@ -48,13 +48,15 @@ class ASTNode(BaseModel):
     """
     node_id: str
     name: str
-    node_type: str  # "function" | "class" | "import"
+    node_type: str  # "function" | "class" | "method" | "constant" | "statement" | "import" | "fallback"
     file_path: str
     raw_source: str
     stub_source: str
     token_cost: int
     stub_token_cost: int
     dependencies: List[str] = Field(default_factory=list)
+    # node_id of the enclosing class for methods; None for top-level symbols
+    parent_id: Optional[str] = None
 
 
 class BudgetState(BaseModel):

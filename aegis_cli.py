@@ -336,7 +336,7 @@ def run_retrieval_eval(pruner: Optional[ASTPruner] = None) -> Dict[str, float]:
     Prints recall@budget on the labelled question set: does the pruned
     context still contain the code needed to answer each question?
     """
-    from orchestrator.pruning_eval import run_eval
+    from evals.pruning_eval import run_eval
 
     results, summary = run_eval(pruner=pruner)
 

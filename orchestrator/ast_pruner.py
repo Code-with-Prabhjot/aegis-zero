@@ -47,37 +47,61 @@ class ASTPruner:
         return max(1, len(text) // 4)
 
     def _extract_dependencies(
-        self, node: ast.AST, repo_symbols: Optional[Set[str]] = None
+        self,
+        node: ast.AST,
+        repo_symbols: Optional[Set[str]] = None,
+        class_name: Optional[str] = None,
     ) -> List[str]:
         """
         Extracts referenced names and function calls from an AST node.
+
+        Inside a method (class_name given), `self.x(...)` / `cls.x(...)` resolve
+        to the sibling method `Class.x`. Other attribute calls record the bare
+        attribute name, which the call graph may resolve to a uniquely named
+        method elsewhere in the repository.
         If repo_symbols is provided, filters dependencies to exact repository symbols.
         """
         deps: Set[str] = set()
         for sub in ast.walk(node):
             if isinstance(sub, ast.Call):
-                if isinstance(sub.func, ast.Name):
-                    deps.add(sub.func.id)
-                elif isinstance(sub.func, ast.Attribute):
-                    deps.add(sub.func.attr)
+                func = sub.func
+                if isinstance(func, ast.Name):
+                    deps.add(func.id)
+                elif isinstance(func, ast.Attribute):
+                    receiver = func.value
+                    if (
+                        class_name
+                        and isinstance(receiver, ast.Name)
+                        and receiver.id in ("self", "cls")
+                    ):
+                        deps.add(f"{class_name}.{func.attr}")
+                    else:
+                        deps.add(func.attr)
             elif isinstance(sub, ast.Name) and isinstance(sub.ctx, ast.Load):
                 deps.add(sub.id)
 
         if repo_symbols is not None:
             deps = deps.intersection(repo_symbols)
 
-        return sorted(list(deps))
+        return sorted(deps)
+
+    @staticmethod
+    def _short_name(node: ASTNode) -> str:
+        return node.name.rsplit(".", 1)[-1]
 
     def construct_call_graph(self, nodes: List[ASTNode]) -> List[ASTNode]:
         """
         Populates and filters each node's dependencies with exact symbol names
-        of other parsed ASTNodes across the repository.
+        of other parsed ASTNodes across the repository. Method short names
+        (`dispatch` for `BifrostClient.dispatch`) are kept so attribute calls
+        like `bifrost.dispatch(...)` can be resolved.
         """
         known_symbols = {n.name for n in nodes if n.name and n.node_type != "import"}
+        known_symbols |= {self._short_name(n) for n in nodes if n.node_type == "method"}
         for n in nodes:
             if n.node_type != "import":
                 n.dependencies = sorted(
-                    list({dep for dep in n.dependencies if dep in known_symbols and dep != n.name})
+                    {dep for dep in n.dependencies if dep in known_symbols and dep != n.name}
                 )
         return nodes
 
@@ -85,29 +109,51 @@ class ASTPruner:
         """
         Builds a bidirectional caller <-> callee graph keyed by node_id.
 
-        Dependencies are recorded as bare symbol names, so each one is resolved
-        to concrete nodes: a definition in the caller's own file wins (Python
+        Dependencies are recorded as symbol names, so each one is resolved to
+        concrete nodes: a definition in the caller's own file wins (Python
         scoping), otherwise every repository definition with that name is linked.
-        Keying by node_id keeps same-named symbols in different files (e.g. two
-        `main` functions) from collapsing into one graph vertex.
+        Bare attribute names resolve to a method only when exactly one method in
+        the repository has that name, to avoid linking every `reset()` together.
+        Methods are always linked to their class, and calling a class links to
+        its `__init__`. Keying by node_id keeps same-named symbols in different
+        files (e.g. two `main` functions) from collapsing into one graph vertex.
         """
         by_name: Dict[str, List[ASTNode]] = collections.defaultdict(list)
-        for n in nodes:
-            if n.node_type != "import":
-                by_name[n.name].append(n)
-
-        adj: Dict[str, Set[str]] = collections.defaultdict(set)
+        methods_by_short: Dict[str, List[ASTNode]] = collections.defaultdict(list)
         for n in nodes:
             if n.node_type == "import":
                 continue
+            by_name[n.name].append(n)
+            if n.node_type == "method":
+                methods_by_short[self._short_name(n)].append(n)
+
+        adj: Dict[str, Set[str]] = collections.defaultdict(set)
+
+        def link(a: str, b: str) -> None:
+            if a != b:
+                adj[a].add(b)
+                adj[b].add(a)
+
+        def resolve(dep: str, caller: ASTNode) -> List[ASTNode]:
+            targets = by_name.get(dep)
+            if not targets:
+                short = methods_by_short.get(dep, [])
+                targets = short if len(short) == 1 else []
+            same_file = [t for t in targets if t.file_path == caller.file_path]
+            return same_file or targets
+
+        for n in nodes:
+            if n.node_type == "import":
+                continue
+            if n.parent_id:
+                link(n.node_id, n.parent_id)
             for dep in n.dependencies:
-                targets = by_name.get(dep, [])
-                same_file = [t for t in targets if t.file_path == n.file_path]
-                for t in same_file or targets:
-                    if t.node_id == n.node_id:
-                        continue
-                    adj[n.node_id].add(t.node_id)
-                    adj[t.node_id].add(n.node_id)
+                for t in resolve(dep, n):
+                    link(n.node_id, t.node_id)
+                    if t.node_type == "class":
+                        for init in by_name.get(f"{t.name}.__init__", []):
+                            if init.file_path == t.file_path:
+                                link(n.node_id, init.node_id)
         return adj
 
     @staticmethod
@@ -206,8 +252,10 @@ class ASTPruner:
         Generates a syntactically valid 1-line type-safe stub for functions or classes.
 
         For functions:
-        Retains signature, parameters, and type annotations, replacing body
-        with '... # [AST-STUB: {saved_tokens} tokens saved]'.
+        Retains decorators, signature, parameters, and type annotations, replacing
+        the body with '...'. No per-stub annotation is added: on method-heavy code
+        those comments cost more tokens than they convey. The pruned buffer carries
+        a single summary line instead.
 
         For classes:
         Retains class definition header, docstring summary, and converts each
@@ -226,11 +274,7 @@ class ASTPruner:
             # Preserve decorators (e.g. @classmethod, @staticmethod)
             dec_str = "".join(f"@{ast.unparse(d)}\n" for d in node.decorator_list)
 
-            # Baseline tokens for the stub header
-            base_stub = f"{dec_str}{async_prefix}def {node.name}({args_str}){return_str}: ..."
-            saved_tokens = max(0, raw_token_cost - self.count_tokens(base_stub))
-
-            return f"{dec_str}{async_prefix}def {node.name}({args_str}){return_str}: ... # [AST-STUB: {saved_tokens} tokens saved]"
+            return f"{dec_str}{async_prefix}def {node.name}({args_str}){return_str}: ..."
 
         elif isinstance(node, ast.ClassDef):
             # Class definition header
@@ -272,6 +316,135 @@ class ASTPruner:
 
         return ast.unparse(node)
 
+    # Constants at or below this cost are kept verbatim even when "stubbed";
+    # eliding them would save almost nothing and lose useful configuration.
+    SMALL_CONSTANT_TOKENS = 40
+
+    @staticmethod
+    def _stmt_start_line(stmt: ast.stmt) -> int:
+        decorators = getattr(stmt, "decorator_list", None) or []
+        return min([stmt.lineno] + [d.lineno for d in decorators])
+
+    @staticmethod
+    def _slice_lines(lines: List[str], start: int, end: int) -> str:
+        """1-based inclusive line slice, preserving original indentation."""
+        return "".join(lines[start - 1:end]).rstrip("\n")
+
+    def _make_node(
+        self,
+        file_path: str,
+        name: str,
+        node_type: str,
+        raw: str,
+        stub: str,
+        dependencies: List[str],
+        parent_id: Optional[str] = None,
+    ) -> ASTNode:
+        # A stub must never cost more than the code it replaces. Fallback stubs are
+        # exempt: their raw source doesn't parse, so it can never stand in for them.
+        if node_type != "fallback" and self.count_tokens(stub) >= self.count_tokens(raw):
+            stub = raw
+        return ASTNode(
+            node_id=f"{file_path}::{name}",
+            name=name,
+            node_type=node_type,
+            file_path=file_path,
+            raw_source=raw,
+            stub_source=stub,
+            token_cost=self.count_tokens(raw),
+            stub_token_cost=self.count_tokens(stub),
+            dependencies=dependencies,
+            parent_id=parent_id,
+        )
+
+    def _constant_stub(self, stmt: ast.stmt, raw: str) -> str:
+        saved = self.count_tokens(raw)
+        if saved <= self.SMALL_CONSTANT_TOKENS:
+            return raw
+        if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+            head = f"{stmt.target.id}: {ast.unparse(stmt.annotation)}"
+            return f"{head} = ...  # [AST-STUB: {saved} tokens saved]"
+        if isinstance(stmt, ast.Assign) and all(
+            isinstance(t, (ast.Name, ast.Tuple)) for t in stmt.targets
+        ):
+            targets = " = ".join(ast.unparse(t) for t in stmt.targets)
+            return f"{targets} = ...  # [AST-STUB: {saved} tokens saved]"
+        return f"# [AST-STUB: top-level assignment elided, {saved} tokens saved]"
+
+    @staticmethod
+    def _assignment_name(stmt: ast.stmt) -> str:
+        targets = stmt.targets if isinstance(stmt, ast.Assign) else [stmt.target]
+        names: List[str] = []
+        for t in targets:
+            if isinstance(t, ast.Name):
+                names.append(t.id)
+            elif isinstance(t, ast.Tuple):
+                names.extend(e.id for e in t.elts if isinstance(e, ast.Name))
+        return names[0] if names else f"assign_L{stmt.lineno}"
+
+    def _parse_class(
+        self, file_path: str, stmt: ast.ClassDef, lines: List[str], repo_symbols: Optional[Set[str]]
+    ) -> List[ASTNode]:
+        """
+        Splits a class into a header node (decorators, `class` line, docstring,
+        class attributes and nested statements) plus one node per method, so the
+        pruner can keep a single relevant method without the whole class.
+        Original indentation is preserved so any mix of full/stubbed parts parses.
+        """
+        class_id = f"{file_path}::{stmt.name}"
+        start = self._stmt_start_line(stmt)
+        first_body = stmt.body[0]
+        body_start = self._stmt_start_line(first_body)
+        body_indent = re.match(r"\s*", lines[first_body.lineno - 1]).group(0) or "    "
+
+        is_method = lambda b: isinstance(b, (ast.FunctionDef, ast.AsyncFunctionDef))
+        methods = [b for b in stmt.body if is_method(b)]
+        others = [b for b in stmt.body if not is_method(b)]
+
+        header_parts = []
+        if body_start > start:
+            header_parts.append(self._slice_lines(lines, start, body_start - 1))
+        for o in others:
+            header_parts.append(self._slice_lines(lines, self._stmt_start_line(o), o.end_lineno))
+        class_raw = "\n".join(p for p in header_parts if p)
+
+        # Stub: decorators + class line + first docstring line (+ `...` if no methods follow).
+        dec_str = "".join(f"@{ast.unparse(d)}\n" for d in stmt.decorator_list)
+        bases = [ast.unparse(b) for b in stmt.bases] + [ast.unparse(k) for k in stmt.keywords]
+        bases_str = f"({', '.join(bases)})" if bases else ""
+        header_line = f"class {stmt.name}{bases_str}:"
+        saved = max(0, self.count_tokens(class_raw) - self.count_tokens(header_line))
+        stub = f"{dec_str}{header_line}  # [AST-STUB: {saved} tokens saved]"
+        docstring = ast.get_docstring(stmt)
+        if docstring:
+            first_line = docstring.strip().splitlines()[0].replace('"""', "").strip()
+            stub += f'\n{body_indent}"""{first_line}"""'
+        elif not methods:
+            stub += f"\n{body_indent}..."
+
+        class_deps: Set[str] = set()
+        for b in stmt.bases:
+            class_deps |= set(self._extract_dependencies(b, repo_symbols))
+        for o in others:
+            class_deps |= set(self._extract_dependencies(o, repo_symbols, class_name=stmt.name))
+
+        out = [self._make_node(file_path, stmt.name, "class", class_raw, stub, sorted(class_deps))]
+
+        for m in methods:
+            m_raw = self._slice_lines(lines, self._stmt_start_line(m), m.end_lineno)
+            m_stub_flat = self.generate_1line_stub(m, m_raw)
+            m_stub = "\n".join(body_indent + ln for ln in m_stub_flat.splitlines())
+            out.append(self._make_node(
+                file_path,
+                f"{stmt.name}.{m.name}",
+                "method",
+                m_raw,
+                m_stub,
+                self._extract_dependencies(m, repo_symbols, class_name=stmt.name),
+                parent_id=class_id,
+            ))
+        return out
+
     def parse_source(
         self,
         file_path: str,
@@ -279,7 +452,10 @@ class ASTPruner:
         repo_symbols: Optional[Set[str]] = None,
     ) -> List[ASTNode]:
         """
-        Parses Python source code into structured ASTNode objects.
+        Parses Python source code into structured ASTNode objects:
+        imports, functions, classes (header + one node per method),
+        top-level constants, and other top-level statements.
+
         Gracefully catches SyntaxErrors (e.g., partial mid-edit buffer),
         wrapping the file in a safe fallback ASTNode with structured logging.
         """
@@ -293,83 +469,55 @@ class ASTPruner:
                 lineno,
                 e.msg,
             )
-            raw = source_code
-            t_cost = self.count_tokens(raw)
             stub = f"# [AST-SYNTAX-FALLBACK: {file_path}] SyntaxError on line {lineno}: {e.msg}\n..."
-            s_cost = self.count_tokens(stub)
             fallback_sym = f"fallback_{os.path.splitext(os.path.basename(file_path))[0]}"
-            return [
-                ASTNode(
-                    node_id=f"{file_path}::{fallback_sym}",
-                    name=fallback_sym,
-                    node_type="fallback",
-                    file_path=file_path,
-                    raw_source=raw,
-                    stub_source=stub,
-                    token_cost=t_cost,
-                    stub_token_cost=s_cost,
-                    dependencies=[],
-                )
-            ]
+            return [self._make_node(file_path, fallback_sym, "fallback", source_code, stub, [])]
 
+        lines = source_code.splitlines(keepends=True)
         nodes: List[ASTNode] = []
+        used_names: Set[str] = set()
 
         for idx, statement in enumerate(tree.body):
+            start = self._stmt_start_line(statement)
+            raw = self._slice_lines(lines, start, statement.end_lineno)
+
             if isinstance(statement, (ast.Import, ast.ImportFrom)):
-                raw = ast.get_source_segment(source_code, statement) or ast.unparse(statement)
-                t_cost = self.count_tokens(raw)
-                deps = [alias.name for alias in statement.names]
-                nodes.append(
-                    ASTNode(
-                        node_id=f"{file_path}::import_{idx}",
-                        name=f"import_{idx}",
-                        node_type="import",
-                        file_path=file_path,
-                        raw_source=raw,
-                        stub_source=raw,  # Imports are preserved as-is
-                        token_cost=t_cost,
-                        stub_token_cost=t_cost,
-                        dependencies=deps,
-                    )
-                )
+                nodes.append(self._make_node(
+                    file_path, f"import_{idx}", "import", raw, raw,
+                    [alias.name for alias in statement.names],
+                ))
+
             elif isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                raw = ast.get_source_segment(source_code, statement) or ast.unparse(statement)
-                stub = self.generate_1line_stub(statement, raw)
-                t_cost = self.count_tokens(raw)
-                s_cost = self.count_tokens(stub)
-                deps = self._extract_dependencies(statement, repo_symbols=repo_symbols)
-                nodes.append(
-                    ASTNode(
-                        node_id=f"{file_path}::{statement.name}",
-                        name=statement.name,
-                        node_type="function",
-                        file_path=file_path,
-                        raw_source=raw,
-                        stub_source=stub,
-                        token_cost=t_cost,
-                        stub_token_cost=s_cost,
-                        dependencies=deps,
-                    )
-                )
+                nodes.append(self._make_node(
+                    file_path, statement.name, "function", raw,
+                    self.generate_1line_stub(statement, raw),
+                    self._extract_dependencies(statement, repo_symbols=repo_symbols),
+                ))
+
             elif isinstance(statement, ast.ClassDef):
-                raw = ast.get_source_segment(source_code, statement) or ast.unparse(statement)
-                stub = self.generate_1line_stub(statement, raw)
-                t_cost = self.count_tokens(raw)
-                s_cost = self.count_tokens(stub)
-                deps = self._extract_dependencies(statement, repo_symbols=repo_symbols)
-                nodes.append(
-                    ASTNode(
-                        node_id=f"{file_path}::{statement.name}",
-                        name=statement.name,
-                        node_type="class",
-                        file_path=file_path,
-                        raw_source=raw,
-                        stub_source=stub,
-                        token_cost=t_cost,
-                        stub_token_cost=s_cost,
-                        dependencies=deps,
-                    )
-                )
+                nodes.extend(self._parse_class(file_path, statement, lines, repo_symbols))
+
+            elif isinstance(statement, (ast.Assign, ast.AnnAssign)):
+                name = self._assignment_name(statement)
+                if name in used_names:
+                    name = f"{name}_L{statement.lineno}"
+                nodes.append(self._make_node(
+                    file_path, name, "constant", raw,
+                    self._constant_stub(statement, raw),
+                    self._extract_dependencies(statement, repo_symbols=repo_symbols),
+                ))
+
+            else:
+                # Module docstrings, `if __name__ == "__main__":`, try/except blocks, etc.
+                saved = self.count_tokens(raw)
+                kind = type(statement).__name__.lower()
+                nodes.append(self._make_node(
+                    file_path, f"stmt_L{statement.lineno}", "statement", raw,
+                    f"# [AST-STUB: top-level {kind} elided, {saved} tokens saved]",
+                    self._extract_dependencies(statement, repo_symbols=repo_symbols),
+                ))
+
+            used_names.add(nodes[-1].name)
 
         return nodes
 
@@ -472,7 +620,13 @@ class ASTPruner:
         selected_names = []
         stubbed_names = []
 
+        multi_file = len({n.file_path for n in nodes}) > 1
+        current_file = None
+
         for n in nodes:
+            if multi_file and n.file_path != current_file:
+                current_file = n.file_path
+                buffer_elements.append(f"# ===== File: {current_file} =====")
             if n.node_type == "import" or n.node_id in selected_for_full:
                 buffer_elements.append(n.raw_source)
                 if n.node_type != "import":
@@ -480,6 +634,17 @@ class ASTPruner:
             else:
                 buffer_elements.append(n.stub_source)
                 stubbed_names.append(n.name)
+
+        elided = sum(
+            n.token_cost - n.stub_token_cost
+            for n in nodes
+            if n.node_type != "import" and n.node_id not in selected_for_full
+        )
+        if stubbed_names:
+            buffer_elements.insert(0, (
+                f"# [AST-STUB: {len(stubbed_names)} of {len(candidates)} symbols shown as signatures only; "
+                f"{elided} tokens elided. Request a symbol by name for its full body.]"
+            ))
 
         hybrid_code = "\n\n".join(buffer_elements)
 
