@@ -99,6 +99,8 @@ class ActionApprovalRequest(BaseModel):
     command_or_path: str
     diff_payload: Optional[str] = None
     hmac_token: str
+    signed_payload: Optional[str] = None
+    expires_at: Optional[str] = None
     is_quarantined: bool = True
     is_approved: bool = False
 
@@ -236,4 +238,3 @@ class ActionApproveRequest(BaseModel):
     payload: str
     target_path: Optional[str] = None
     diff_payload: Optional[str] = None
-    secret_key: Optional[str] = None
