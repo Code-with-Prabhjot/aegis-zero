@@ -81,53 +81,121 @@ class ASTPruner:
                 )
         return nodes
 
+    def _build_adjacency(self, nodes: List[ASTNode]) -> Dict[str, Set[str]]:
+        """
+        Builds a bidirectional caller <-> callee graph keyed by node_id.
+
+        Dependencies are recorded as bare symbol names, so each one is resolved
+        to concrete nodes: a definition in the caller's own file wins (Python
+        scoping), otherwise every repository definition with that name is linked.
+        Keying by node_id keeps same-named symbols in different files (e.g. two
+        `main` functions) from collapsing into one graph vertex.
+        """
+        by_name: Dict[str, List[ASTNode]] = collections.defaultdict(list)
+        for n in nodes:
+            if n.node_type != "import":
+                by_name[n.name].append(n)
+
+        adj: Dict[str, Set[str]] = collections.defaultdict(set)
+        for n in nodes:
+            if n.node_type == "import":
+                continue
+            for dep in n.dependencies:
+                targets = by_name.get(dep, [])
+                same_file = [t for t in targets if t.file_path == n.file_path]
+                for t in same_file or targets:
+                    if t.node_id == n.node_id:
+                        continue
+                    adj[n.node_id].add(t.node_id)
+                    adj[t.node_id].add(n.node_id)
+        return adj
+
+    @staticmethod
+    def _matches_seed(node: ASTNode, seed: str) -> bool:
+        """
+        Exact identifier match: the seed must equal the node's name, its node_id,
+        or (for qualified names like `Class.method`) its last segment. Substring
+        matching is avoided so a short seed like `get` doesn't match everything.
+        """
+        return seed == node.name or seed == node.node_id or seed == node.name.rsplit(".", 1)[-1]
+
     def compute_hop_distances(
         self, nodes: List[ASTNode], seed_symbols: List[str]
     ) -> Dict[str, float]:
         """
         Computes shortest-path hop distances d_AST(v, V_seed) using breadth-first search
         with a visited set guard to prevent infinite loops on circular calls or mutual recursion.
-        """
-        # Adjacency list: bidirectional caller <-> callee graph
-        adj: Dict[str, Set[str]] = collections.defaultdict(set)
-        for n in nodes:
-            if n.node_type == "import":
-                continue
-            for dep in n.dependencies:
-                adj[n.name].add(dep)
-                adj[dep].add(n.name)
 
-        seed_set = set(seed_symbols)
+        Returns distances keyed by node_id.
+        """
+        adj = self._build_adjacency(nodes)
+        seed_set = [s for s in seed_symbols if s]
+
         visited: Set[str] = set()
         distances: Dict[str, float] = {
-            n.name: float("inf") for n in nodes if n.node_type != "import"
+            n.node_id: float("inf") for n in nodes if n.node_type != "import"
         }
         queue = collections.deque()
 
-        # Seed discovery
         for n in nodes:
             if n.node_type == "import":
                 continue
-            is_seed = (
-                n.name in seed_set
-                or n.node_id in seed_set
-                or any(s == n.name or s in n.name for s in seed_set)
-            )
-            if is_seed:
-                visited.add(n.name)
-                distances[n.name] = 0.0
-                queue.append((n.name, 0))
+            if any(self._matches_seed(n, s) for s in seed_set):
+                visited.add(n.node_id)
+                distances[n.node_id] = 0.0
+                queue.append((n.node_id, 0))
 
-        # Cycle-safe BFS traversal
         while queue:
-            curr_sym, dist = queue.popleft()
-            for neighbor in adj.get(curr_sym, set()):
+            curr_id, dist = queue.popleft()
+            for neighbor in sorted(adj.get(curr_id, ())):
                 if neighbor not in visited:
                     visited.add(neighbor)
                     distances[neighbor] = float(dist + 1)
                     queue.append((neighbor, dist + 1))
 
         return distances
+
+    def select_seeds(self, query: str, nodes: List[ASTNode], max_seeds: int = 5) -> List[str]:
+        """
+        Deterministically picks seed symbols for a query.
+
+        1. Identifiers in the query that exactly name a repository symbol.
+        2. Otherwise, the most lexically relevant symbols (ties broken by node_id).
+        3. Otherwise, the first symbol by node_id.
+        """
+        candidates = [n for n in nodes if n.node_type not in ("import", "fallback")]
+        if not candidates:
+            return []
+
+        query_idents = set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", query))
+        exact = sorted({
+            n.name for n in candidates
+            if any(self._matches_seed(n, w) for w in query_idents)
+        })
+        if exact:
+            return exact[:max_seeds]
+
+        scores = self.lexical_relevance(query, candidates)
+        ranked = sorted(candidates, key=lambda n: (-scores.get(n.node_id, 0.0), n.node_id))
+        top = [n.name for n in ranked if scores.get(n.node_id, 0.0) > 0][:1]
+        if top:
+            return top
+        return [min(candidates, key=lambda n: n.node_id).name]
+
+    def lexical_relevance(self, query: str, nodes: List[ASTNode]) -> Dict[str, float]:
+        """
+        Lexical similarity of each node to the query in [0, 1], keyed by node_id.
+        Fraction of query words found in the node's name and leading source.
+        """
+        query_words = set(re.findall(r"\w+", query.lower()))
+        scores: Dict[str, float] = {}
+        for n in nodes:
+            node_words = set(re.findall(r"\w+", (n.name + " " + n.raw_source[:300]).lower()))
+            overlap = (
+                len(query_words & node_words) / float(len(query_words)) if query_words else 0.0
+            )
+            scores[n.node_id] = min(1.0, max(0.0, overlap))
+        return scores
 
     def generate_1line_stub(
         self,
@@ -339,25 +407,18 @@ class ASTPruner:
         # Step 1: Compute cycle-safe BFS hop distances d_AST(v, V_seed)
         distances = self.compute_hop_distances(nodes, seed_symbols)
 
-        query_words = set(re.findall(r"\w+", query.lower()))
-
         # Separate imports (always included in full to maintain syntax)
         imports = [n for n in nodes if n.node_type == "import"]
         candidates = [n for n in nodes if n.node_type != "import"]
+        lexical_scores = self.lexical_relevance(query, candidates)
 
         # Step 2: Compute hybrid relevance r(v, q) per Blueprint Equation 1
         scored_candidates = []
         for n in candidates:
-            # Lexical / semantic similarity
-            node_words = set(re.findall(r"\w+", (n.name + " " + n.raw_source[:300]).lower()))
-            if query_words:
-                overlap = len(query_words.intersection(node_words)) / float(len(query_words))
-            else:
-                overlap = 0.0
-            lexical_sim = min(1.0, max(0.0, overlap))
+            lexical_sim = lexical_scores.get(n.node_id, 0.0)
 
             # Graph hop distance and exponential decay
-            dist = distances.get(n.name, float("inf"))
+            dist = distances.get(n.node_id, float("inf"))
             decay = math.exp(-0.40 * dist) if dist != float("inf") else 0.0
 
             # Blueprint Equation 1
@@ -382,8 +443,9 @@ class ASTPruner:
                 "density": density,
             })
 
-        # Sort candidates: Priority first (Seeds -> 1-hop -> 2-hop -> Unreachable), then density descending
-        scored_candidates.sort(key=lambda x: (x["priority"], -x["density"]))
+        # Sort candidates: Priority first (Seeds -> 1-hop -> 2-hop -> Unreachable),
+        # then density descending, then node_id so ties are broken deterministically.
+        scored_candidates.sort(key=lambda x: (x["priority"], -x["density"], x["node"].node_id))
 
         # Step 3: Baseline token cost with all non-imports stubbed and imports full
         baseline_tokens = sum(n.token_cost for n in imports) + sum(
