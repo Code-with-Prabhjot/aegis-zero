@@ -101,3 +101,38 @@ def test_select_seeds_is_deterministic_across_hash_seeds():
         assert res.returncode == 0, res.stderr
         outputs.add(res.stdout.strip())
     assert len(outputs) == 1, f"Pruning output varied across hash seeds: {outputs}"
+
+
+def test_terms_split_identifiers_and_stem():
+    terms = ASTPruner._terms("verify_chain_integrity collapsedStubs HTTPServer computed")
+    assert {"verify", "chain", "integrity", "collaps", "stub", "http", "server", "comput"} <= set(terms)
+    assert ASTPruner._terms("stubs") == ASTPruner._terms("stub")
+    assert ASTPruner._terms("verified") == ASTPruner._terms("verify")
+
+
+def test_bm25_prefers_symbol_named_after_query_terms():
+    pruner = ASTPruner()
+    src = (
+        "def verify_chain_integrity(chain):\n    return all(chain)\n\n"
+        "def export_report(data):\n    # mentions chain once\n    return str(data)\n"
+    )
+    nodes = pruner.parse_source("audit.py", src)
+    scores = pruner.lexical_relevance("how is the chain verified?", nodes)
+    assert scores["audit.py::verify_chain_integrity"] == 1.0
+    assert scores["audit.py::export_report"] < 1.0
+
+
+def test_plain_english_word_does_not_seed_module_variable():
+    pruner = ASTPruner()
+    src = (
+        "ledger = object()\n\n"
+        "def compute_preflight_cost(budget, tier):\n"
+        "    '''Down-route to a cheaper tier when the budget is exceeded.'''\n"
+        "    return tier\n"
+    )
+    nodes = pruner.parse_source("m.py", src)
+    seeds = pruner.select_seeds("How does the ledger down-route when the budget is exceeded?", nodes)
+    assert "ledger" not in seeds
+    assert seeds[0] == "compute_preflight_cost"
+    # A code-like token still matches exactly.
+    assert pruner.select_seeds("inspect compute_preflight_cost", nodes) == ["compute_preflight_cost"]

@@ -35,3 +35,10 @@ def test_run_eval_reports_recall_and_compression():
     for r in results:
         assert r.pruned_tokens > 0
         assert r.raw_tokens >= r.pruned_tokens
+
+
+def test_retrieval_quality_floor():
+    """Regression guard: pruning must keep the code questions need, not just shrink."""
+    _, summary = run_eval()
+    assert summary["mean_recall"] >= 0.85, summary
+    assert summary["mean_compression"] >= 0.70, summary
