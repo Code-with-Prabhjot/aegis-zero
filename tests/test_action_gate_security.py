@@ -142,3 +142,17 @@ def test_rejections_are_recorded_in_audit_ledger():
         if e["event_type"] == "HMAC_REJECTED"
     ]
     assert rejected, "403 rejections must leave an audit trail"
+
+
+def test_cors_only_allows_configured_origins():
+    client = TestClient(app)
+    allowed = client.options(
+        "/api/telemetry",
+        headers={"Origin": "http://localhost:3000", "Access-Control-Request-Method": "GET"},
+    )
+    assert allowed.headers.get("access-control-allow-origin") == "http://localhost:3000"
+    evil = client.options(
+        "/api/action/approve",
+        headers={"Origin": "https://evil.example", "Access-Control-Request-Method": "POST"},
+    )
+    assert evil.headers.get("access-control-allow-origin") is None

@@ -9,14 +9,8 @@ import {
   QuarantinedAction,
   TelemetryState,
 } from "@/types";
+import { MODELS, apiUrl, wsUrl } from "@/lib/config";
 
-// Model labels shown in the workbench. Keep in sync with orchestrator/model_registry.py
-// (override per deployment with NEXT_PUBLIC_AEGIS_*_MODEL).
-const MODELS = {
-  frontier: process.env.NEXT_PUBLIC_AEGIS_FRONTIER_MODEL ?? "claude-opus-5-5",
-  fallback: process.env.NEXT_PUBLIC_AEGIS_FALLBACK_MODEL ?? "gpt-5.6",
-  micro: process.env.NEXT_PUBLIC_AEGIS_MICRO_MODEL ?? "claude-haiku-5-5",
-};
 
 const INITIAL_NODES: ASTGraphNode[] = [
   {
@@ -361,7 +355,7 @@ export function useOrchestrator() {
 
     const connectWs = () => {
       try {
-        const ws = new WebSocket("ws://localhost:8000/ws/telemetry");
+        const ws = new WebSocket(wsUrl("/ws/telemetry"));
         wsRef.current = ws;
 
         ws.onopen = () => {
@@ -438,7 +432,7 @@ export function useOrchestrator() {
   // 1-Click Chaos Trigger
   const triggerChaosOutage = useCallback(async () => {
     try {
-      await fetch("http://localhost:8000/api/chaos/inject", {
+      await fetch(apiUrl("/api/chaos/inject"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status_code: 429 }),
@@ -460,7 +454,7 @@ export function useOrchestrator() {
   // Reset Chaos
   const resetChaos = useCallback(async () => {
     try {
-      await fetch("http://localhost:8000/api/chaos/reset", {
+      await fetch(apiUrl("/api/chaos/reset"), {
         method: "POST",
       });
     } catch {
@@ -487,7 +481,7 @@ export function useOrchestrator() {
 
       if (isHalted) {
         targetTier = "tier-0-local";
-        activeModel = "deepseek-coder-v2 (local enclave)";
+        activeModel = `${MODELS.local} (local enclave)`;
       } else if (remaining < 0.08) {
         targetTier = "tier-1-micro";
         activeModel = `${MODELS.micro} (down-routed)`;
@@ -532,7 +526,7 @@ export function useOrchestrator() {
       }
 
       try {
-        const res = await fetch("http://localhost:8000/api/action/approve", {
+        const res = await fetch(apiUrl("/api/action/approve"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -624,7 +618,7 @@ export function useOrchestrator() {
         airGapLock: willLock,
         activeTier: willLock ? "tier-0-local" : "tier-2-frontier",
         activeModel: willLock
-          ? "deepseek-coder-v2 (air-gapped local enclave)"
+          ? `${MODELS.local} (air-gapped local enclave)`
           : MODELS.frontier,
       };
     });
@@ -643,7 +637,7 @@ export function useOrchestrator() {
     ) => {
       setIsExecuting(true);
       try {
-        const response = await fetch("http://localhost:8000/api/orchestrate", {
+        const response = await fetch(apiUrl("/api/orchestrate"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -779,7 +773,7 @@ export function useOrchestrator() {
     ) => {
       setIsExecuting(true);
       try {
-        const response = await fetch("http://localhost:8000/api/security/redteam", {
+        const response = await fetch(apiUrl("/api/security/redteam"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -793,7 +787,7 @@ export function useOrchestrator() {
           ...prev,
           airGapLock: true,
           activeTier: "tier-0-local",
-          activeModel: "deepseek-coder-v2 (local enclave)",
+          activeModel: `${MODELS.local} (local enclave)`,
         }));
         setFailoverToast(
           `ATTACK CONTAINED: Entropy H=${data.entropy_score || 5.12} -> Hardware Locked to Local Ollama Enclave`
@@ -803,7 +797,7 @@ export function useOrchestrator() {
           ...prev,
           airGapLock: true,
           activeTier: "tier-0-local",
-          activeModel: "deepseek-coder-v2 (local enclave)",
+          activeModel: `${MODELS.local} (local enclave)`,
         }));
         setFailoverToast(
           "ATTACK CONTAINED: Entropy H=5.12 -> Hardware Locked to Local Ollama Enclave"
@@ -818,7 +812,7 @@ export function useOrchestrator() {
   // 1-Click Compliance Bundle Export
   const exportAuditBundle = useCallback(async () => {
     try {
-      const res = await fetch("http://localhost:8000/api/audit/export");
+      const res = await fetch(apiUrl("/api/audit/export"));
       const data = await res.json();
       const blob = new Blob([JSON.stringify(data, null, 2)], {
         type: "application/json",
@@ -870,7 +864,7 @@ export function useOrchestrator() {
   // Atomic Rollback Last Diff
   const rollbackLastDiff = useCallback(async () => {
     try {
-      const res = await fetch("http://localhost:8000/api/action/rollback", {
+      const res = await fetch(apiUrl("/api/action/rollback"), {
         method: "POST",
       });
       const data = await res.json();

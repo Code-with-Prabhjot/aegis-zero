@@ -38,3 +38,6 @@ Thumbs.db
 
 # Sandbox workspace for approved AEGIS-0 writes
 .aegis-workspace/
+
+# TypeScript incremental build info
+*.tsbuildinfo
