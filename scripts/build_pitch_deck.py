@@ -113,9 +113,33 @@ def build_deck(output_path: str):
         c.setFillColor(TEXT_MUTED)
         c.drawCentredString(cx + card_w / 2, 130, label)
 
+    # Portal Terms & Timeline Synchronization (Slide 1)
+    c.setFont("Helvetica-Bold", 8.5)
+    c.setFillColor(ACCENT_FUCHSIA)
+    c.drawCentredString(
+        PAGE_WIDTH / 2,
+        72,
+        "Prototype & Form Submission Deadline: November 21, 2026 (11:59 PM IST / 18:29 UTC) • Final Judging: November 28, 2026",
+    )
     c.setFont("Helvetica", 8)
+    c.setFillColor(TEXT_PURPLE)
+    c.drawCentredString(
+        PAGE_WIDTH / 2,
+        56,
+        "Prize Pool (Double Win Eligible): $1,000 USD Cash + Direct Engineering Interview Opportunities (Bifrost / Maxim AI) + 60,000 Tavily Credits Pool + $50 Omnidimension Voice Credits",
+    )
+    c.setFont("Helvetica", 7.5)
     c.setFillColor(TEXT_MUTED)
-    c.drawCentredString(PAGE_WIDTH / 2, 35, "Licensed under Apache-2.0 • Anonymized Submission Package • geekroom.in")
+    c.drawCentredString(
+        PAGE_WIDTH / 2,
+        40,
+        "Submission Channels: Dual filing on HackCulture Portal + Official Final Google Form (https://forms.gle/8fafao1ymEpihgKd9) + Compulsory GitHub Star on maximhq/bifrost",
+    )
+    c.drawCentredString(
+        PAGE_WIDTH / 2,
+        25,
+        "Licensed under Apache-2.0 • Anonymized Team PS · MK · RRS · MB • geekroom.in",
+    )
     c.showPage()
 
     # =========================================================================
@@ -496,7 +520,8 @@ def build_deck(output_path: str):
     c.setFont("Helvetica-Bold", 8.5)
     c.setFillColor(ACCENT_EMERALD)
     c.drawString(510, 140, "✓ 1-Click Chaos Inject/Reset hooked directly into Mission Control UI")
-    c.drawString(510, 115, "✓ Real-time failover event streaming via WebSockets to Workbench")
+    c.drawString(510, 120, "✓ Real-time failover event streaming via WebSockets to Workbench")
+    c.drawString(510, 100, "✓ Maxim AI Track: Cash Prize Pool & Direct Engineering Interview Opportunities")
     c.showPage()
 
     # =========================================================================
@@ -593,6 +618,7 @@ def build_deck(output_path: str):
     c.setFont("Helvetica-Bold", 8)
     c.setFillColor(ACCENT_EMERALD)
     c.drawString(510, 80, "Verified: Validated against latest official documentation snippets.")
+    c.drawString(510, 65, "Tavily Track Bounty: 60,000 Credits Pool • Code GEEKROOM2 active through Nov 28")
     c.showPage()
 
     # =========================================================================
@@ -703,9 +729,9 @@ def build_deck(output_path: str):
 
     # 6 Official Rubric Cards (2 rows of 3 columns)
     r_w = 273
-    r_h = 160
+    r_h = 148
     r_gap_x = 30
-    r_gap_y = 20
+    r_gap_y = 14
 
     rubric_cards = [
         ("1. Technical Execution (25 Pts)", [
@@ -750,29 +776,72 @@ def build_deck(output_path: str):
         row = idx // 3
         col_idx = idx % 3
         cx = 40 + col_idx * (r_w + r_gap_x)
-        cy = 285 - row * (r_h + r_gap_y)
+        cy = 280 - row * (r_h + r_gap_y)
 
         draw_card(c, cx, cy, r_w, r_h, border_color=col)
         c.setFont("Helvetica-Bold", 9.5)
         c.setFillColor(TEXT_WHITE)
-        c.drawString(cx + 12, cy + r_h - 20, title)
+        c.drawString(cx + 12, cy + r_h - 18, title)
 
-        py = cy + r_h - 42
+        py = cy + r_h - 36
         c.setFont("Helvetica", 7.5)
         c.setFillColor(TEXT_WHITE)
         for pt in points:
             c.drawString(cx + 12, py, pt)
-            py -= 18
+            py -= 16
 
-    # Bottom Roadmap Bar
-    draw_card(c, 40, 45, 880, 50, border_color=ACCENT_FUCHSIA, bg_color=HexColor("#120724"))
+    # Bottom Portal Synchronization & Submission Specification Card
+    draw_card(c, 40, 30, 880, 76, border_color=ACCENT_FUCHSIA, bg_color=HexColor("#120724"))
     c.setFont("Helvetica-Bold", 8)
     c.setFillColor(ACCENT_FUCHSIA)
-    c.drawString(55, 75, "PRODUCTION ROADMAP:")
+    c.drawString(55, 92, "OFFICIAL SUBMISSION SYNCHRONIZATION & PORTAL SPECIFICATION (DOUBLE WIN ELIGIBLE):")
+    c.setFont("Helvetica-Bold", 7.5)
+    c.setFillColor(ACCENT_CYAN)
+    c.drawRightString(905, 92, "Dual-Track Grand Slam: PS-01 Bifrost + PS-06 Tavily + Omnidimension")
+
+    c.setFont("Helvetica-Bold", 7.5)
+    c.setFillColor(ACCENT_CYAN)
+    c.drawString(55, 78, "• Submission Deadline:")
     c.setFont("Helvetica", 7.5)
     c.setFillColor(TEXT_WHITE)
-    c.drawString(185, 75, "Q1 2026: Polyglot AST (Tree-Sitter for TypeScript/Rust/Go)  •  Q2 2026: Enterprise IDE Extensions (VS Code & JetBrains plugins)")
-    c.drawString(55, 56, "Q3 2026: Distributed Multi-Tenant Bifrost Mesh with automated compliance auditing and enterprise team budget pooling.")
+    c.drawString(165, 78, "November 21, 2026 (11:59 PM IST / 18:29 UTC)")
+
+    c.setFont("Helvetica-Bold", 7.5)
+    c.setFillColor(ACCENT_CYAN)
+    c.drawString(410, 78, "• Final Judging Round:")
+    c.setFont("Helvetica", 7.5)
+    c.setFillColor(TEXT_WHITE)
+    c.drawString(515, 78, "November 28, 2026 (7:00 AM – 11:59 PM IST / 01:30 – 18:29 UTC)")
+
+    c.setFont("Helvetica-Bold", 7.5)
+    c.setFillColor(ACCENT_EMERALD)
+    c.drawString(55, 64, "• Prize Pool (Double Win Eligible):")
+    c.setFont("Helvetica", 7.5)
+    c.setFillColor(TEXT_WHITE)
+    c.drawString(
+        210,
+        64,
+        "$1,000 USD Cash + Direct Engineering Interview Opportunities (Bifrost / Maxim AI) + 60,000 Tavily Credits Pool + $50 Omnidimension Voice Credits",
+    )
+
+    c.setFont("Helvetica-Bold", 7.5)
+    c.setFillColor(ACCENT_AMBER)
+    c.drawString(55, 50, "• Submission Channels:")
+    c.setFont("Helvetica", 7.5)
+    c.setFillColor(TEXT_WHITE)
+    c.drawString(
+        165,
+        50,
+        "Dual filing on HackCulture Portal + Official Final Google Form (https://forms.gle/8fafao1ymEpihgKd9) + Compulsory GitHub Star on maximhq/bifrost",
+    )
+
+    c.setFont("Helvetica", 7)
+    c.setFillColor(TEXT_MUTED)
+    c.drawString(
+        55,
+        37,
+        "Roadmap: Q1 2026 Polyglot AST (Tree-Sitter) • Q2 2026 IDE Extensions • Q3 2026 Multi-Tenant Bifrost Mesh • Team PS · MK · RRS · MB (Anonymized)",
+    )
     c.showPage()
 
     c.save()

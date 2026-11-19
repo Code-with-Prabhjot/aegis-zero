@@ -4,18 +4,20 @@
 ### Zero-Trust Token-Optimal Autonomous Coding & Live-Verification Engine
 **Dual-Track Grand Slam Architecture: PS-01 (Bifrost) &bull; PS-06 (Tavily) &bull; Omnidimension &bull; Pathway**
 
-[![Track](https://img.shields.io/badge/Track-PS--01_Bifrost_+_PS--06_Tavily_Dual--Stack-7928CA.svg?style=for-the-badge)](https://github.com)
+[![Track](https://img.shields.io/badge/Track-PS--01_Bifrost_+_PS--06_Tavily_Dual--Stack-7928CA.svg?style=for-the-badge)](https://hackculture.io/hackathons/ai-global-hackathon)
 [![Tests](https://img.shields.io/badge/Tests-35%2F35_Passing-10b981.svg?style=for-the-badge)](https://github.com)
 [![Token Reduction](https://img.shields.io/badge/AST_Compression--84.2%25_Tokens-d946ef.svg?style=for-the-badge)](https://github.com)
 [![Failover](https://img.shields.io/badge/Circuit_Breaker-%3C180ms_Failover-06b6d4.svg?style=for-the-badge)](https://github.com)
 [![Privacy Lock](https://img.shields.io/badge/AirGap_Lock-Zero_WAN_Egress-ef4444.svg?style=for-the-badge)](https://github.com)
+[![Deadline](https://img.shields.io/badge/Deadline-Nov_21,_2026_11:59_PM_IST-ff007f.svg?style=for-the-badge)](https://forms.gle/8fafao1ymEpihgKd9)
+[![Prize Pool](https://img.shields.io/badge/Prize_Pool-$1,000_+_Interviews_+_60k_Credits-f59e0b.svg?style=for-the-badge)](https://hackculture.io/hackathons/ai-global-hackathon)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=for-the-badge)](LICENSE)
 
 ---
 
 **Built by Team PS &bull; MK &bull; RRS &bull; MB**
 
-[Live Mission Control UI](http://localhost:3000/workbench) &bull; [FastAPI Swagger Specs](http://localhost:8000/docs) &bull; [8-Slide Pitch Deck (PDF)](docs/AEGIS_0_Pitch_Deck.pdf) &bull; [Demo Script](docs/DEMO_SCRIPT.md)
+[Live Mission Control UI](http://localhost:3000/workbench) &bull; [FastAPI Swagger Specs](http://localhost:8000/docs) &bull; [8-Slide Pitch Deck (PDF)](docs/AEGIS_0_Pitch_Deck.pdf) &bull; [Demo Script](docs/DEMO_SCRIPT.md) &bull; [Official Final Google Form](https://forms.gle/8fafao1ymEpihgKd9) &bull; [Bifrost Repo (Star ⭐)](https://github.com/maximhq/bifrost)
 
 </div>
 
@@ -216,6 +218,9 @@ AEGIS-0 leverages Bifrost as its foundational LLM proxy:
 3. **Sub-180ms Circuit Breakers**:
    - Maintains exponential-moving-average failure tracking across sliding 60-second windows.
    - When an upstream provider returns HTTP 429 (Rate Limit) or HTTP 503 (Unavailable), the circuit trips to `OPEN`, immediately diverting subsequent requests to secondary models in **$<180\text{ ms}$** without session state loss.
+4. **Maxim AI Hackathon Track Alignment**:
+   - Competing for the **$1,000 USD Liquid Cash Prize Pool** + **Direct Engineering Interview Opportunities** with the Maxim AI / Bifrost core engineering team.
+   - Compulsory Star Requirement: Starred on GitHub at [`maximhq/bifrost`](https://github.com/maximhq/bifrost).
 
 ### B. Tavily (by Nebius) — Real-Time Web Verification & Auto-Patching
 
@@ -225,10 +230,13 @@ AEGIS-0 integrates Tavily to bridge the LLM knowledge cutoff:
 3. **AST Self-Healing Engine**:
    - Maps stale method calls (e.g. `openai.ChatCompletion.create`) to contemporary v1 client instantiations (`client.chat.completions.create`).
    - Automatically injects necessary imports (`from openai import OpenAI`) and client construction, validating syntax validity before staging mutations.
+4. **Tavily Track Bounties & Builder Credits**:
+   - Competing for the **60,000 Tavily API Credits Pool** ($60,000 value pool distributed across the Top 3 Tavily projects; updated from 50k allocation).
+   - Universal builder credits: Coupon code `GEEKROOM2` provides 8,000 free Tavily search credits (valid through November 28, 2026).
 
 ### C. Omnidimension Voice AI & Pathway Integration
 
-- **Omnidimension Voice Gate**: Destructive actions quarantined in Stage 03 present an acoustic biometric passphrase (`"Approve Alpha-7"`). Operators confirm deployments vocally or via Web Audio biometric streaming, binding cryptographic intent to physical authorization.
+- **Omnidimension Voice Gate**: Destructive actions quarantined in Stage 03 present an acoustic biometric passphrase (`"Approve Alpha-7"`). Operators confirm deployments vocally or via Web Audio biometric streaming, binding cryptographic intent to physical authorization. Eligible for the **$50 Omnidimension Voice Credits** pool.
 - **Pathway Streaming AST Delta Engine**: Listens to real-time filesystem events (`watchfiles`), incrementally maintaining the AST dependency call-graph so submodular knapsack selection operates in $O(k \log |V|)$ amortized time.
 
 ---
@@ -412,7 +420,7 @@ tests/test_phase5_adjudicator.py::test_streaming_index_api_endpoint PASSED
 
 ## 10. Team Roster (Anonymized)
 
-In accordance with competition guidelines, all team members are represented by anonymized initials:
+In accordance with official hackathon submission guidelines, all team contributors are represented strictly by anonymized initials:
 
 - **PS** &bull; Systems Architecture, Bifrost AI Gateway Integration & Deterministic Budget Ledger
 - **MK** &bull; Submodular AST Pruning Engine, Knapsack Maximization & Compiler Stubs
@@ -421,7 +429,25 @@ In accordance with competition guidelines, all team members are represented by a
 
 ---
 
+## 11. Hackathon Submission & Portal Synchronization (Geek Room Specification)
+
+AEGIS-0 is fully synchronized with the updated **Geek Room Global AI Hackathon Technical Specification** (`docs/Geek_Room_Global_AI_Hackathon_Specification.pdf`):
+
+| Portal Requirement | Official Specification & Verified Details | Compliance Status |
+|:---|:---|:---:|
+| **Prototype & Form Submission Deadline** | **November 21, 2026 (11:59 PM IST / 18:29 UTC)** (Extended Build Window) | ✅ Verified |
+| **Final Judging Round** | **November 28, 2026 (7:00 AM – 11:59 PM IST / 01:30 – 18:29 UTC)** (Online Finale) | ✅ Verified |
+| **Prize Pool (Double Win Eligible)** | **$1,000 USD Cash + Direct Engineering Interview Opportunities (Bifrost / Maxim AI)** + **60,000 Tavily Credits Pool** + **$50 Omnidimension Voice Credits** | ✅ Verified |
+| **Submission Channel A** | **HackCulture Portal** (`https://hackculture.io/hackathons/ai-global-hackathon`) &mdash; Primary Theme: `PS-01: Build a Coding Agent That Gets the Job Done on the Fewest Tokens Possible` (Tavily Integration checkbox toggled) | ✅ Verified |
+| **Submission Channel B** | **Official Final Google Form (`https://forms.gle/8fafao1ymEpihgKd9`)** &mdash; Mandatory final project lodging for jury shortlisting | ✅ Verified |
+| **Compulsory Verification Action** | **Compulsory GitHub Star on `maximhq/bifrost`** (`https://github.com/maximhq/bifrost`) with member GitHub usernames recorded | ✅ Verified |
+| **Double Win Eligibility** | Confirmed by organizers: *"Double Win: A team can win prizes from both tracks!"* Eligible for both Bifrost ($1,000 Cash + Interviews) and Tavily (60,000 Credits) pools simultaneously. | ✅ Verified |
+| **Deliverables Package** | Public GitHub Repo + [8-Slide Pitch Deck](docs/AEGIS_0_Pitch_Deck.pdf) (<5 MB, 16:9 Cosmic Violet) + [180s Demo Walkthrough Script](docs/DEMO_SCRIPT.md) | ✅ Verified |
+| **Automated Verification** | **35 / 35 Automated Pytest Suite Passing (100%)** spanning unit, integration, red-team, hardening, and adjudicator suites | ✅ Verified |
+
+---
+
 <div align="center">
 <b>AEGIS-0: The Zero-Trust Grand Slam Standard for Enterprise Autonomous Engineering</b><br/>
-<sub>Licensed under Apache-2.0 &bull; Built for the Geek Room Global AI Hackathon</sub>
+<sub>Geek Room Global AI Hackathon 2026 &bull; Dual-Track Grand Slam (PS-01 &bull; PS-06) &bull; Team PS · MK · RRS · MB</sub>
 </div>
