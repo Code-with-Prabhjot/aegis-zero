@@ -3,14 +3,22 @@ AEGIS-0 AST Call-Graph Pruner & 1-Line Stubbing Engine
 Performs token-optimal context pruning via budgeted submodular knapsack selection,
 retaining full context for seed symbols and callers/callees while collapsing
 unselected functions and classes into 1-line type-safe stubs (>=75% compression).
+Features multi-hop BFS call-graph traversal with cycle-safe visited guards and
+graceful syntax-error fallback for mid-edit buffers.
 """
 
 import ast
+import collections
+import logging
+import math
+import os
 import re
 from typing import List, Dict, Tuple, Optional, Set
 import tiktoken
 
 from orchestrator.schemas import ASTNode
+
+logger = logging.getLogger("orchestrator.ast_pruner")
 
 
 class ASTPruner:
@@ -38,9 +46,12 @@ class ASTPruner:
         # Fallback approximation: 1 token ~ 4 chars
         return max(1, len(text) // 4)
 
-    def _extract_dependencies(self, node: ast.AST) -> List[str]:
+    def _extract_dependencies(
+        self, node: ast.AST, repo_symbols: Optional[Set[str]] = None
+    ) -> List[str]:
         """
         Extracts referenced names and function calls from an AST node.
+        If repo_symbols is provided, filters dependencies to exact repository symbols.
         """
         deps: Set[str] = set()
         for sub in ast.walk(node):
@@ -51,7 +62,72 @@ class ASTPruner:
                     deps.add(sub.func.attr)
             elif isinstance(sub, ast.Name) and isinstance(sub.ctx, ast.Load):
                 deps.add(sub.id)
+
+        if repo_symbols is not None:
+            deps = deps.intersection(repo_symbols)
+
         return sorted(list(deps))
+
+    def construct_call_graph(self, nodes: List[ASTNode]) -> List[ASTNode]:
+        """
+        Populates and filters each node's dependencies with exact symbol names
+        of other parsed ASTNodes across the repository.
+        """
+        known_symbols = {n.name for n in nodes if n.name and n.node_type != "import"}
+        for n in nodes:
+            if n.node_type != "import":
+                n.dependencies = sorted(
+                    list({dep for dep in n.dependencies if dep in known_symbols and dep != n.name})
+                )
+        return nodes
+
+    def compute_hop_distances(
+        self, nodes: List[ASTNode], seed_symbols: List[str]
+    ) -> Dict[str, float]:
+        """
+        Computes shortest-path hop distances d_AST(v, V_seed) using breadth-first search
+        with a visited set guard to prevent infinite loops on circular calls or mutual recursion.
+        """
+        # Adjacency list: bidirectional caller <-> callee graph
+        adj: Dict[str, Set[str]] = collections.defaultdict(set)
+        for n in nodes:
+            if n.node_type == "import":
+                continue
+            for dep in n.dependencies:
+                adj[n.name].add(dep)
+                adj[dep].add(n.name)
+
+        seed_set = set(seed_symbols)
+        visited: Set[str] = set()
+        distances: Dict[str, float] = {
+            n.name: float("inf") for n in nodes if n.node_type != "import"
+        }
+        queue = collections.deque()
+
+        # Seed discovery
+        for n in nodes:
+            if n.node_type == "import":
+                continue
+            is_seed = (
+                n.name in seed_set
+                or n.node_id in seed_set
+                or any(s == n.name or s in n.name for s in seed_set)
+            )
+            if is_seed:
+                visited.add(n.name)
+                distances[n.name] = 0.0
+                queue.append((n.name, 0))
+
+        # Cycle-safe BFS traversal
+        while queue:
+            curr_sym, dist = queue.popleft()
+            for neighbor in adj.get(curr_sym, set()):
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    distances[neighbor] = float(dist + 1)
+                    queue.append((neighbor, dist + 1))
+
+        return distances
 
     def generate_1line_stub(
         self,
@@ -128,11 +204,46 @@ class ASTPruner:
 
         return ast.unparse(node)
 
-    def parse_source(self, file_path: str, source_code: str) -> List[ASTNode]:
+    def parse_source(
+        self,
+        file_path: str,
+        source_code: str,
+        repo_symbols: Optional[Set[str]] = None,
+    ) -> List[ASTNode]:
         """
         Parses Python source code into structured ASTNode objects.
+        Gracefully catches SyntaxErrors (e.g., partial mid-edit buffer),
+        wrapping the file in a safe fallback ASTNode with structured logging.
         """
-        tree = ast.parse(source_code)
+        try:
+            tree = ast.parse(source_code)
+        except SyntaxError as e:
+            lineno = getattr(e, "lineno", 1) or 1
+            logger.warning(
+                "Graceful AST fallback: SyntaxError in '%s' at line %s: %s",
+                file_path,
+                lineno,
+                e.msg,
+            )
+            raw = source_code
+            t_cost = self.count_tokens(raw)
+            stub = f"# [AST-SYNTAX-FALLBACK: {file_path}] SyntaxError on line {lineno}: {e.msg}\n..."
+            s_cost = self.count_tokens(stub)
+            fallback_sym = f"fallback_{os.path.splitext(os.path.basename(file_path))[0]}"
+            return [
+                ASTNode(
+                    node_id=f"{file_path}::{fallback_sym}",
+                    name=fallback_sym,
+                    node_type="fallback",
+                    file_path=file_path,
+                    raw_source=raw,
+                    stub_source=stub,
+                    token_cost=t_cost,
+                    stub_token_cost=s_cost,
+                    dependencies=[],
+                )
+            ]
+
         nodes: List[ASTNode] = []
 
         for idx, statement in enumerate(tree.body):
@@ -158,7 +269,7 @@ class ASTPruner:
                 stub = self.generate_1line_stub(statement, raw)
                 t_cost = self.count_tokens(raw)
                 s_cost = self.count_tokens(stub)
-                deps = self._extract_dependencies(statement)
+                deps = self._extract_dependencies(statement, repo_symbols=repo_symbols)
                 nodes.append(
                     ASTNode(
                         node_id=f"{file_path}::{statement.name}",
@@ -177,7 +288,7 @@ class ASTPruner:
                 stub = self.generate_1line_stub(statement, raw)
                 t_cost = self.count_tokens(raw)
                 s_cost = self.count_tokens(stub)
-                deps = self._extract_dependencies(statement)
+                deps = self._extract_dependencies(statement, repo_symbols=repo_symbols)
                 nodes.append(
                     ASTNode(
                         node_id=f"{file_path}::{statement.name}",
@@ -205,8 +316,8 @@ class ASTPruner:
         Solves the budgeted submodular knapsack maximization:
         S* = argmax_{S subset V} [ sum r(v, q) - redundancy ] s.t. sum c(v) <= B
 
-        Greedily selects seed symbols and caller/callee dependencies into full context,
-        collapsing all remaining nodes into 1-line stubs.
+        Uses Blueprint Equation 1 hybrid relevance:
+        r(v, q) = 0.65 * lexical_semantic_sim(v, q) + 0.35 * exp(-0.40 * d_AST(v, V_seed))
 
         Returns:
             Tuple[hybrid_buffer, metrics_dict]
@@ -222,36 +333,42 @@ class ASTPruner:
                 "stubbed_nodes": [],
             }
 
-        seed_set = set(seed_symbols)
+        # Step 0: Ensure cross-node call-graph edges are constructed and resolved
+        self.construct_call_graph(nodes)
+
+        # Step 1: Compute cycle-safe BFS hop distances d_AST(v, V_seed)
+        distances = self.compute_hop_distances(nodes, seed_symbols)
+
         query_words = set(re.findall(r"\w+", query.lower()))
 
         # Separate imports (always included in full to maintain syntax)
         imports = [n for n in nodes if n.node_type == "import"]
         candidates = [n for n in nodes if n.node_type != "import"]
 
-        # 1. Compute node relevance r(v, q) and knapsack density
+        # Step 2: Compute hybrid relevance r(v, q) per Blueprint Equation 1
         scored_candidates = []
         for n in candidates:
-            is_direct_seed = (n.name in seed_set) or any(s in n.name for s in seed_set)
-
-            # Call graph 1-hop distance: callers or callees of seed symbols
-            is_caller = any(dep in seed_set for dep in n.dependencies)
-            is_callee = any(s in n.dependencies for s in seed_set)
-            is_related = is_caller or is_callee
-
-            # Semantic / Lexical overlap with query
-            node_words = set(re.findall(r"\w+", (n.name + " " + n.raw_source[:200]).lower()))
-            overlap = len(query_words.intersection(node_words)) / max(1, len(query_words))
-
-            if is_direct_seed:
-                relevance = 100.0 + overlap * 10.0
-                priority = 0
-            elif is_related:
-                relevance = 50.0 + overlap * 5.0
-                priority = 1
+            # Lexical / semantic similarity
+            node_words = set(re.findall(r"\w+", (n.name + " " + n.raw_source[:300]).lower()))
+            if query_words:
+                overlap = len(query_words.intersection(node_words)) / float(len(query_words))
             else:
-                relevance = 1.0 + overlap * 2.0
-                priority = 2
+                overlap = 0.0
+            lexical_sim = min(1.0, max(0.0, overlap))
+
+            # Graph hop distance and exponential decay
+            dist = distances.get(n.name, float("inf"))
+            decay = math.exp(-0.40 * dist) if dist != float("inf") else 0.0
+
+            # Blueprint Equation 1
+            relevance = 0.65 * lexical_sim + 0.35 * decay
+
+            # Priority tier based on BFS hop distance:
+            # 0: direct seed (d=0)
+            # 1: 1-hop caller/callee (d=1)
+            # 2: 2-hop caller/callee (d=2)
+            # 999: disconnected / unreachable
+            priority = int(dist) if dist != float("inf") else 999
 
             marginal_tokens = max(1, n.token_cost - n.stub_token_cost)
             density = relevance / float(marginal_tokens)
@@ -260,14 +377,15 @@ class ASTPruner:
                 "node": n,
                 "priority": priority,
                 "relevance": relevance,
+                "hop_distance": dist,
                 "marginal_tokens": marginal_tokens,
                 "density": density,
             })
 
-        # Sort candidates: Priority first (Seeds -> 1-hop -> Others), then density descending
+        # Sort candidates: Priority first (Seeds -> 1-hop -> 2-hop -> Unreachable), then density descending
         scored_candidates.sort(key=lambda x: (x["priority"], -x["density"]))
 
-        # 2. Baseline token cost with all non-imports stubbed and imports full
+        # Step 3: Baseline token cost with all non-imports stubbed and imports full
         baseline_tokens = sum(n.token_cost for n in imports) + sum(
             n.stub_token_cost for n in candidates
         )
@@ -275,7 +393,7 @@ class ASTPruner:
         selected_for_full: Set[str] = set()
         current_budget = baseline_tokens
 
-        # 3. Greedy Knapsack Selection
+        # Step 4: Greedy Knapsack Selection
         for item in scored_candidates:
             n = item["node"]
             marginal = item["marginal_tokens"]
@@ -287,7 +405,7 @@ class ASTPruner:
                 selected_for_full.add(n.node_id)
                 current_budget += marginal
 
-        # 4. Assemble hybrid buffer maintaining original node ordering
+        # Step 5: Assemble hybrid buffer maintaining original node ordering
         buffer_elements: List[str] = []
         selected_names = []
         stubbed_names = []
@@ -303,7 +421,7 @@ class ASTPruner:
 
         hybrid_code = "\n\n".join(buffer_elements)
 
-        # 5. Calculate verified token metrics
+        # Step 6: Calculate verified token metrics
         raw_tokens_total = sum(n.token_cost for n in nodes)
         hybrid_tokens_total = self.count_tokens(hybrid_code)
         tokens_saved = max(0, raw_tokens_total - hybrid_tokens_total)

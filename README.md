@@ -5,7 +5,7 @@
 **Dual-Track Grand Slam Architecture: PS-01 (Bifrost) &bull; PS-06 (Tavily) &bull; Omnidimension &bull; Pathway**
 
 [![Track](https://img.shields.io/badge/Track-PS--01_Bifrost_+_PS--06_Tavily_Dual--Stack-7928CA.svg?style=for-the-badge)](https://github.com)
-[![Tests](https://img.shields.io/badge/Tests-20%2F20_Passing-10b981.svg?style=for-the-badge)](https://github.com)
+[![Tests](https://img.shields.io/badge/Tests-28%2F28_Passing-10b981.svg?style=for-the-badge)](https://github.com)
 [![Token Reduction](https://img.shields.io/badge/AST_Compression--84.2%25_Tokens-d946ef.svg?style=for-the-badge)](https://github.com)
 [![Failover](https://img.shields.io/badge/Circuit_Breaker-%3C180ms_Failover-06b6d4.svg?style=for-the-badge)](https://github.com)
 [![Privacy Lock](https://img.shields.io/badge/AirGap_Lock-Zero_WAN_Egress-ef4444.svg?style=for-the-badge)](https://github.com)
@@ -92,8 +92,11 @@ flowchart TD
        │
        ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ STAGE 0: Zero-Trust Privacy Guard & Air-Gap Taint Engine                   │
+│ STAGE 0: Zero-Trust Privacy Guard, Anti-Obfuscation & Air-Gap Taint Engine  │
 │ • Shannon Entropy H = -Σ p_i log2(p_i) on candidate tokens (Threshold: 4.5) │
+│ • False-Positive Immunity: Excludes .env.example and UPPER_SNAKE_CASE consts│
+│ • Base64 / Hex Smuggling Shield: Decodes strings >= 32 chars and scans payload│
+│ • Unicode Shield: Blocks \u200b, \u200c, \u200d, \u2060, \ufeff steganography           │
 │ • Regex scanners for AWS (AKIA...), OpenAI (sk-...), and RSA Private Keys   │
 │ • If Tainted OR .aegis-policy.yml (confidential: true):                     │
 │   ==> Enforce TIER_0_LOCAL & set X-Bifrost-Privacy-Lock: local_only         │
@@ -141,6 +144,8 @@ flowchart TD
 │ • Destructive actions (Write, Shell, Git) quarantined with HMAC-SHA256      │
 │ • Dual authorization: Monaco Visual Side-by-Side Diff + Voice Confirmation  │
 │ • Acoustic Passphrase: "Approve Alpha-7" verified before disk mutation      │
+│ • Immutable SHA-256 Tamper-Evident Audit Ledger (TamperEvidentAuditLedger)  │
+│ • Verifiable Hash-Chain Integrity from Genesis (0*64) & Atomic Rollback     │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -148,17 +153,21 @@ flowchart TD
 
 ## 3. Mathematical Foundations
 
-### 1. Submodular AST Knapsack Pruning
+### 1. Submodular AST Knapsack Pruning & Multi-Hop BFS
 
 To overcome context saturation, AEGIS-0 models symbol selection as a budgeted submodular knapsack maximization over the code dependency graph $G = (V, E)$:
 
 $$\mathcal{S}^* = \arg\max_{\mathcal{S} \subseteq V} \left[ \sum_{v \in \mathcal{S}} r(v, q) - \lambda \sum_{u, v \in \mathcal{S}} \text{Sim}(u, v) \right] \quad \text{s.t.} \quad \sum_{v \in \mathcal{S}} c(v) + \sum_{u \in V \setminus \mathcal{S}} c_{\text{stub}}(u) \le \mathcal{B}$$
 
-Where:
-- $r(v, q)$: Lexical and semantic relevance of symbol $v$ to query $q$, with priority promotion for 1-hop callers and callees.
+Where hybrid relevance is computed per **Blueprint Equation 1** using cycle-safe breadth-first search hop-distances $d_{\text{AST}}(v, V_{\text{seed}})$:
+
+$$r(v, q) = 0.65 \cdot \text{lexical\_semantic\_sim}(v, q) + 0.35 \cdot \exp(-0.40 \cdot d_{\text{AST}}(v, V_{\text{seed}}))$$
+
+- $d_{\text{AST}}(v, V_{\text{seed}})$: Shortest path call-graph distance computed via cycle-safe BFS with a `visited: set[str]` guard (0 for seeds, 1 for callers/callees, $\infty$ for disconnected components).
 - $c(v)$: Exact token cost of full symbol implementation (counted via `cl100k_base`).
 - $c_{\text{stub}}(u)$: Token cost of the 1-line type-safe stub ($<25$ tokens).
 - $\mathcal{B}$: Calibrated token budget ($\le 25\%$ of baseline context).
+- **Graceful Syntax Fallback**: Mid-edit buffers with partial syntax errors are caught cleanly, logged, and wrapped as type-safe fallback nodes without failing orchestration.
 
 ### 2. Empirical Freshness Scoring $F(c_j)$ (PS-06 Specification)
 
@@ -173,11 +182,24 @@ $$F(c_j) = 100 \times \left[ w_1 e^{-\mu \Delta t_j} + w_2 A_{\text{semantic}}(c
 - $I_{\text{deprecated}} \in \{0, 1\}$: Binary deprecation flag from official migration guides
 - **Decision Boundary**: $F(c_j) < 70 \implies \text{STALE} \implies$ Trigger AST Self-Healing Auto-Patch.
 
-### 3. Shannon Entropy Security Fence
+### 3. Shannon Entropy & Anti-Obfuscation Firewall
 
 $$\mathcal{H}(X) = -\sum_{i=1}^{n} p(x_i) \log_2 p(x_i)$$
 
-Any continuous token string $s$ with $|s| \ge 20$ characters exhibiting $\mathcal{H}(s) \ge 4.50$ bits/character triggers immediate hardware-locked local routing (`TIER_0_LOCAL`), guaranteeing $\Pr(\text{WAN Egress} \mid \text{Taint} = 1) = 0.000$.
+- Any candidate token string $s$ with $|s| \ge 20$ exhibiting $\mathcal{H}(s) \ge 4.50$ triggers hardware-locked local routing (`TIER_0_LOCAL`), guaranteeing $\Pr(\text{WAN Egress} \mid \text{Taint} = 1) = 0.000$.
+- **False-Positive Immunity**: Excludes `.env.example` templates and `UPPER_SNAKE_CASE` constants from entropy triggers.
+- **Base64/Hex Smuggling Shield**: Decodes strings $\ge 32$ chars in memory and recurses entropy + secret + prompt-injection checks.
+- **Unicode Steganography Filter**: Strips invisible zero-width chars (`\u200b`, `\u200c`, `\u200d`, `\u2060`, `\ufeff`).
+
+### 4. Cryptographic SHA-256 Tamper-Evident Audit Ledger
+
+Every decision, taint event, HMAC approval, and rollback is chained into an immutable Merkle-style sequence:
+
+$$\text{entry\_hash}_i = \text{SHA256}(\text{seq}_i \parallel \text{timestamp}_i \parallel \text{event\_type}_i \parallel \text{payload\_hash}_i \parallel \text{prev\_hash}_i)$$
+
+Where $\text{prev\_hash}_1 = 0^{64}$ (genesis). The engine exposes:
+- `GET /api/audit/export`: Emits the full ledger and cryptographic validity attestation.
+- `POST /api/action/rollback`: Reverts the last approved diff in memory and appends a signed `ACTION_ROLLED_BACK` entry.
 
 ---
 
@@ -240,8 +262,9 @@ aegis-zero/
 │   ├── bifrost_client.py            # Gateway Client with <180ms Circuit Breakers
 │   ├── schemas.py                   # Pydantic v2 Domain Models & Tiers
 │   └── requirements.txt             # Backend Dependencies (rich, reportlab, tiktoken, etc.)
-├── security-gate/                   # Zero-Trust Privacy Guard
-│   └── privacy_guard.py             # Shannon Entropy H>=4.5, Regex Keys & HMAC Gate
+├── security-gate/                   # Zero-Trust Privacy Guard & Audit Trail
+│   ├── privacy_guard.py             # Shannon Entropy H>=4.5, Regex Keys & Anti-Obfuscation
+│   └── audit_trail.py               # Immutable SHA-256 Tamper-Evident Audit Ledger & Rollback
 ├── tavily-freshness/                # PS-06 Freshness Engine
 │   └── freshness_engine.py          # Claim Extraction, Equation 5 F(c_j), Auto-Patch
 ├── mission-control/                 # Next.js 14 Mission Control Workbench
@@ -249,10 +272,11 @@ aegis-zero/
 │   ├── src/app/workbench/page.tsx   # 3-Stage Zero-Scroll 100vh Mission Control + Live Command Bar
 │   ├── src/components/              # Panel1 (AST), Panel2 (Budget), Panel3 (Tavily), Panel4 (Voice)
 │   └── src/hooks/useOrchestrator.ts # WebSocket Hook & Live Dogfooding Runner
-├── tests/                           # 20-Test Automated Pytest Suite
+├── tests/                           # 28-Test Automated Pytest Suite
 │   ├── test_phase1_core.py          # 6 Core Architectural Unit Tests
 │   ├── test_phase2_integration.py   # 8 Full-Pipeline & WebSocket Integration Tests
-│   └── test_phase3_redteam.py       # 6 Adversarial Red-Team & Live Dogfooding Tests
+│   ├── test_phase3_redteam.py       # 6 Adversarial Red-Team & Live Dogfooding Tests
+│   └── test_phase4_hardening.py     # 8 Deep-Tech Hardening, Edge-Case & Audit Ledger Tests
 └── docs/                            # Competition Deliverables
     ├── AEGIS_0_Pitch_Deck.pdf       # Mandatory 8-Slide Widescreen (16:9) Presentation PDF
     └── DEMO_SCRIPT.md               # 180-Second Timestamped Video Walkthrough Script
@@ -323,10 +347,10 @@ python aegis_cli.py "Harden Shannon entropy regex" --repo ./security-gate --yes
 
 ## 9. Verification & Test Suite
 
-AEGIS-0 includes a comprehensive 20-test test suite spanning core unit tests, full integration flows, and adversarial red-team simulations:
+AEGIS-0 includes a comprehensive 28-test test suite spanning core unit tests, full integration flows, adversarial red-team simulations, and deep-tech edge-case hardening:
 
 ```bash
-# Run all 20 tests with full verbosity
+# Run all 28 tests with full verbosity
 .venv\Scripts\python.exe -m pytest tests/ -v
 ```
 
@@ -352,8 +376,16 @@ tests/test_phase3_redteam.py::test_aegis_policy_yml_confidential_lock PASSED
 tests/test_phase3_redteam.py::test_live_self_dogfooding_orchestrate_on_orchestrator_dir PASSED
 tests/test_phase3_redteam.py::test_redteam_endpoint_containment PASSED
 tests/test_phase3_redteam.py::test_cli_agent_execution PASSED
+tests/test_phase4_hardening.py::test_ast_circular_dependency_bfs_no_infinite_loop PASSED
+tests/test_phase4_hardening.py::test_ast_malformed_syntax_graceful_fallback PASSED
+tests/test_phase4_hardening.py::test_privacy_guard_clean_repo_no_false_positive PASSED
+tests/test_phase4_hardening.py::test_privacy_guard_base64_secret_smuggling_blocked PASSED
+tests/test_phase4_hardening.py::test_privacy_guard_unicode_zero_width_injection_blocked PASSED
+tests/test_phase4_hardening.py::test_audit_ledger_hash_chain_and_tamper_detection PASSED
+tests/test_phase4_hardening.py::test_api_audit_export_and_rollback_lifecycle PASSED
+tests/test_phase4_hardening.py::test_redteam_obfuscated_vectors_api PASSED
 
-======================== 20 passed in 1.84s ========================
+======================== 28 passed in 2.39s ========================
 ```
 
 ---
