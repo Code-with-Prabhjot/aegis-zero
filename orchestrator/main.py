@@ -44,6 +44,7 @@ from orchestrator.schemas import (
 from orchestrator.ast_pruner import ASTPruner
 from orchestrator.budget_ledger import BudgetLedger
 from orchestrator.bifrost_client import BifrostClient
+from orchestrator.pathway_stream import StreamingASTIndex
 from privacy_guard import PrivacyGuard
 from freshness_engine import FreshnessEngine
 from audit_trail import TamperEvidentAuditLedger
@@ -105,6 +106,7 @@ bifrost = BifrostClient()
 freshness = FreshnessEngine()
 telemetry_hub = TelemetryBroadcaster()
 audit_ledger = TamperEvidentAuditLedger()
+stream_indexer = StreamingASTIndex(pruner=pruner)
 
 # Cumulative session tracking
 total_tokens_saved_cumulative: int = 0
@@ -149,7 +151,17 @@ async def get_telemetry():
         "failover_events": [ev.model_dump() for ev in bifrost.failover_events[-10:]],
         "total_requests": bifrost.total_requests,
         "total_failovers": bifrost.total_failovers,
+        "stream_indexer": stream_indexer.get_telemetry(),
     }
+
+
+@app.get("/api/stream/index")
+async def get_stream_index_telemetry():
+    """
+    Returns Pathway Streaming AST Delta Engine telemetry, tracking reactive cache hits,
+    delta re-parses, and file fingerprints.
+    """
+    return stream_indexer.get_telemetry()
 
 
 @app.post("/api/chaos/inject")
@@ -315,29 +327,13 @@ async def orchestrate(req: OrchestrateRequest):
     ast_nodes_output: List[Dict[str, Any]] = []
 
     if resolved_repo and os.path.exists(resolved_repo):
-        skip_dirs = {".git", ".venv", "venv", "__pycache__", "node_modules", ".pytest_cache"}
-        all_repo_nodes: List[ASTNode] = []
-        if os.path.isfile(resolved_repo):
-            try:
-                with open(resolved_repo, "r", encoding="utf-8", errors="ignore") as f:
-                    code_content = f.read()
-                    all_repo_nodes.extend(pruner.parse_source(os.path.basename(resolved_repo), code_content))
-            except Exception:
-                pass
-        elif os.path.isdir(resolved_repo):
-            for root, dirs, files in os.walk(resolved_repo):
-                dirs[:] = [d for d in dirs if d not in skip_dirs]
-                for f in sorted(files):
-                    if f.endswith(".py"):
-                        full_p = os.path.join(root, f)
-                        rel_p = os.path.relpath(full_p, resolved_repo)
-                        try:
-                            with open(full_p, "r", encoding="utf-8", errors="ignore") as f_obj:
-                                content = f_obj.read()
-                                file_nodes = pruner.parse_source(rel_p, content)
-                                all_repo_nodes.extend(file_nodes)
-                        except Exception:
-                            continue
+        all_repo_nodes, delta_metrics = stream_indexer.index_repository(resolved_repo)
+        if delta_metrics.get("delta_files_reparsed", 0) > 0 or delta_metrics.get("cache_hit_count", 0) > 0:
+            audit_ledger.append_entry(
+                event_type="STREAM_INDEX_SYNC",
+                actor="pathway_indexer",
+                payload=delta_metrics,
+            )
 
         if all_repo_nodes:
             raw_tokens = sum(n.token_cost for n in all_repo_nodes)
