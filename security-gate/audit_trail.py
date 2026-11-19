@@ -107,6 +107,13 @@ class TamperEvidentAuditLedger:
             "actor": actor,
         })
 
+    def peek_last_diff(self) -> Optional[Dict[str, Any]]:
+        """
+        Returns the most recent approved diff snapshot without removing it, so
+        callers can verify a rollback is safe before committing to it.
+        """
+        return self._diff_snapshots[-1] if self._diff_snapshots else None
+
     def rollback_last_diff(self, actor: str = "user_operator") -> Optional[Dict[str, Any]]:
         """
         Reverts the last approved diff snapshot in memory and logs an ACTION_ROLLED_BACK

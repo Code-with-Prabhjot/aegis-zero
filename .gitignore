@@ -35,3 +35,6 @@ aegis-secrets.json
 .DS_Store
 Thumbs.db
 *.zip
+
+# Sandbox workspace for approved AEGIS-0 writes
+.aegis-workspace/

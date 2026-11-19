@@ -534,7 +534,12 @@ export function useOrchestrator() {
           }),
         });
         if (res.ok) {
-          markApproved(`HMAC VERIFIED: Action ${actionId} approved and committed.`);
+          const body = await res.json().catch(() => ({}));
+          markApproved(
+            body.written_path
+              ? `HMAC VERIFIED: Action ${actionId} written to ${body.written_path} (rollback available).`
+              : `HMAC VERIFIED: Action ${actionId} approved.`
+          );
           return;
         }
         const body = await res.json().catch(() => ({}));
