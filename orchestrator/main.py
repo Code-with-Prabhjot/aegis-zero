@@ -370,6 +370,7 @@ async def orchestrate(req: OrchestrateRequest):
     # Nodes the model may ask to expand, and those already shown in full.
     expandable_nodes: List[Any] = []
     full_node_ids: set = set()
+    layout_groups: List[Any] = []  # (nodes, selected_ids) per pruned source
 
     if resolved_repo and os.path.exists(resolved_repo):
         all_repo_nodes, delta_metrics = stream_indexer.index_repository(resolved_repo)
@@ -391,6 +392,7 @@ async def orchestrate(req: OrchestrateRequest):
                 query=req.prompt,
                 seed_symbols=seed_symbols,
                 max_token_budget=calibrated_budget,
+                layout="cache" if req.cache_layout else "interleaved",
             )
             pruned_tokens = metrics["total_tokens"]
             tokens_saved = metrics["tokens_saved"]
@@ -398,6 +400,7 @@ async def orchestrate(req: OrchestrateRequest):
             context_chunks.append(hybrid_code)
 
             selected_ids = set(metrics.get("selected_node_ids", []))
+            layout_groups.append((all_repo_nodes, selected_ids))
             expandable_nodes.extend(all_repo_nodes)
             full_node_ids |= selected_ids
             for n in all_repo_nodes:
@@ -429,12 +432,14 @@ async def orchestrate(req: OrchestrateRequest):
                     query=req.prompt,
                     seed_symbols=seed_symbols,
                     max_token_budget=min(400, max(150, f_raw // 4)),
+                    layout="cache" if req.cache_layout else "interleaved",
                 )
                 f_pruned = pruner.count_tokens(pruned_code)
                 pruned_tokens += f_pruned
                 context_chunks.append(f"# File: {fname}\n{pruned_code}")
 
                 sel_ids = set(stats.get("selected_node_ids", []))
+                layout_groups.append((nodes, sel_ids))
                 expandable_nodes.extend(nodes)
                 full_node_ids |= sel_ids
                 for n in nodes:
@@ -458,6 +463,54 @@ async def orchestrate(req: OrchestrateRequest):
         prompt_t = pruner.count_tokens(req.prompt)
         raw_tokens = prompt_t
         pruned_tokens = prompt_t
+
+    # --------------------------------------------------------------------------
+    # Context layout: build the exact messages before any budget check, so the
+    # pre-flight reservation and savings metrics use the tokens actually sent.
+    # --------------------------------------------------------------------------
+    assembled_context = "\n\n".join(context_chunks)
+    has_stubs = any(
+        n.node_type != "import" and n.node_id not in full_node_ids for n in expandable_nodes
+    )
+    system_prompt = "You are AEGIS-0, an institutional-grade token-optimal coding agent."
+    if has_stubs:
+        system_prompt += "\n" + EXPANSION_INSTRUCTIONS
+    prompt_cache: Dict[str, Any] = {"layout": "interleaved"}
+
+    if req.cache_layout and layout_groups:
+        # Stable, query-independent skeleton first (cacheable prefix);
+        # this request's selected bodies go with the question.
+        prefixes, suffixes = [], []
+        for group_nodes, group_selected in layout_groups:
+            p, sfx = pruner.build_cache_layout(group_nodes, group_selected)
+            prefixes.append(p)
+            if sfx:
+                suffixes.append(sfx)
+        skeleton = "\n\n".join(prefixes)
+        bodies = "\n\n".join(suffixes)
+        system_prompt += f"\nRepository skeleton (signatures; bodies omitted):\n{skeleton}"
+        user_content = (
+            f"Full source of the symbols most relevant to this request:\n{bodies}\n\nRequest: {req.prompt}"
+            if bodies else req.prompt
+        )
+        prefix_tokens = pruner.count_tokens(system_prompt)
+        # Count the context actually sent: the skeleton also carries the
+        # signatures of symbols whose full bodies are in the suffix.
+        pruned_tokens = pruner.count_tokens(skeleton) + pruner.count_tokens(bodies)
+        prompt_cache = {
+            "layout": "skeleton_prefix",
+            "prefix_tokens": prefix_tokens,
+            "prefix_sha256": hashlib.sha256(system_prompt.encode("utf-8")).hexdigest(),
+        }
+    else:
+        if assembled_context:
+            system_prompt += f"\nRepository Context:\n{assembled_context}"
+        user_content = req.prompt
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_content},
+    ]
 
     tokens_saved = max(0, raw_tokens - pruned_tokens)
     compression_ratio = (
@@ -521,20 +574,6 @@ async def orchestrate(req: OrchestrateRequest):
     # --------------------------------------------------------------------------
     # Step 4: Bifrost Model Dispatch with Circuit-Breaker Failover
     # --------------------------------------------------------------------------
-    assembled_context = "\n\n".join(context_chunks)
-    has_stubs = any(
-        n.node_type != "import" and n.node_id not in full_node_ids for n in expandable_nodes
-    )
-    system_prompt = "You are AEGIS-0, an institutional-grade token-optimal coding agent."
-    if has_stubs:
-        system_prompt += "\n" + EXPANSION_INSTRUCTIONS
-    if assembled_context:
-        system_prompt += f"\nRepository Context:\n{assembled_context}"
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": req.prompt},
-    ]
-
     dispatch_res = await bifrost.dispatch(
         messages=messages,
         budget_remaining_usd=remaining_budget,
@@ -548,6 +587,7 @@ async def orchestrate(req: OrchestrateRequest):
     # Each round is budget-checked first and its cost committed to the ledger.
     # --------------------------------------------------------------------------
     expansions: List[Dict[str, Any]] = []
+    cached_tokens_total = 0
     expansion_rounds = 0
     expansion_skipped_reason: Optional[str] = None
     turn_cost_usd = 0.0
@@ -572,10 +612,13 @@ async def orchestrate(req: OrchestrateRequest):
             actual_input_tokens=dispatch_res.prompt_tokens,
             actual_output_tokens=dispatch_res.completion_tokens,
             tier=dispatch_res.tier,
+            cached_input_tokens=dispatch_res.cached_prompt_tokens,
         )
         turn_cost_usd += ledger._calculate_bound_cost(
-            dispatch_res.prompt_tokens, dispatch_res.completion_tokens, dispatch_res.tier
+            dispatch_res.prompt_tokens, dispatch_res.completion_tokens, dispatch_res.tier,
+            dispatch_res.cached_prompt_tokens,
         )
+        cached_tokens_total += dispatch_res.cached_prompt_tokens
         if not ledger.can_afford(session_id, next_input, dispatch_res.tier):
             expansion_skipped_reason = "BUDGET"
             dispatch_res.prompt_tokens = 0
@@ -710,7 +753,12 @@ async def orchestrate(req: OrchestrateRequest):
         actual_input_tokens=dispatch_res.prompt_tokens,
         actual_output_tokens=dispatch_res.completion_tokens,
         tier=dispatch_res.tier,
+        cached_input_tokens=dispatch_res.cached_prompt_tokens,
     )
+    cached_tokens_total += dispatch_res.cached_prompt_tokens
+    if prompt_cache.get("layout") == "skeleton_prefix":
+        prompt_cache["cached_prompt_tokens"] = cached_tokens_total
+        prompt_cache["cache_hit"] = cached_tokens_total > 0
 
     updated_state = ledger.get_session(session_id)
     final_remaining_budget = max(
@@ -761,6 +809,7 @@ async def orchestrate(req: OrchestrateRequest):
                 dispatch_res.prompt_tokens,
                 dispatch_res.completion_tokens,
                 dispatch_res.tier,
+                dispatch_res.cached_prompt_tokens,
             ),
             6,
         ),
@@ -776,6 +825,7 @@ async def orchestrate(req: OrchestrateRequest):
         expansion_tokens=expansion_tokens,
         expansion_rounds=expansion_rounds,
         expansion_skipped_reason=expansion_skipped_reason,
+        prompt_cache=prompt_cache,
     )
 
 

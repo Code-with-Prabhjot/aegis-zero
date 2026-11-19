@@ -13,6 +13,7 @@ import logging
 import math
 import os
 import re
+import textwrap
 from typing import List, Dict, Tuple, Optional, Set
 import tiktoken
 
@@ -311,6 +312,36 @@ class ASTPruner:
 
         top = max(raw_scores.values()) or 1.0
         return {nid: sc / top for nid, sc in raw_scores.items()}
+
+    def build_cache_layout(
+        self, nodes: List[ASTNode], selected_ids: Set[str]
+    ) -> Tuple[str, str]:
+        """
+        Splits pruned context into a prompt-cache-friendly pair:
+
+        - prefix: the repository skeleton (imports + every symbol as its stub),
+          in source order. It depends only on the code, not the query, so it
+          stays byte-identical across requests and can be served from the
+          provider's prefix cache.
+        - suffix: full bodies of the symbols selected for this query,
+          dedented so each one parses on its own.
+        """
+        prefix_parts: List[str] = []
+        multi_file = len({n.file_path for n in nodes}) > 1
+        current_file = None
+        for n in nodes:
+            if multi_file and n.file_path != current_file:
+                current_file = n.file_path
+                prefix_parts.append(f"# ===== File: {current_file} =====")
+            prefix_parts.append(n.raw_source if n.node_type == "import" else n.stub_source)
+
+        suffix_parts: List[str] = []
+        for n in nodes:
+            if n.node_type != "import" and n.node_id in selected_ids:
+                suffix_parts.append(
+                    f"# ===== {n.name} ({n.file_path}) =====\n{textwrap.dedent(n.raw_source)}"
+                )
+        return "\n\n".join(prefix_parts), "\n\n".join(suffix_parts)
 
     EXPAND_REQUEST = re.compile(r"^\s*EXPAND:\s*([A-Za-z_][A-Za-z0-9_.]*)\s*$", re.MULTILINE)
 
@@ -634,9 +665,15 @@ class ASTPruner:
         query: str,
         seed_symbols: List[str],
         max_token_budget: int,
+        layout: str = "interleaved",
     ) -> Tuple[str, Dict]:
         """
         Solves the budgeted submodular knapsack maximization:
+
+        `layout` sets the cost model for promoting a symbol to full source:
+        "interleaved" replaces its stub (marginal = full - stub); "cache" keeps
+        the stub in the stable skeleton and appends the body with a header
+        (marginal = full + header), matching build_cache_layout().
         S* = argmax_{S subset V} [ sum r(v, q) - redundancy ] s.t. sum c(v) <= B
 
         Uses Blueprint Equation 1 hybrid relevance:
@@ -686,7 +723,11 @@ class ASTPruner:
             # 999: disconnected / unreachable
             priority = int(dist) if dist != float("inf") else 999
 
-            marginal_tokens = max(1, n.token_cost - n.stub_token_cost)
+            if layout == "cache":
+                header = f"# ===== {n.name} ({n.file_path}) ====="
+                marginal_tokens = max(1, n.token_cost + self.count_tokens(header))
+            else:
+                marginal_tokens = max(1, n.token_cost - n.stub_token_cost)
             density = relevance / float(marginal_tokens)
 
             scored_candidates.append({

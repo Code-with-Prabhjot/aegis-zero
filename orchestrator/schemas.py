@@ -142,6 +142,8 @@ class BifrostCompletionResponse(BaseModel):
     failover_chain: List[str] = Field(default_factory=list)
     latency_ms: float = 0.0
     cached: bool = False
+    # Prompt tokens served from the provider's prefix cache (billed at the cache-read rate)
+    cached_prompt_tokens: int = 0
 
 
 class FreshnessClaimVerification(BaseModel):
@@ -175,6 +177,8 @@ class OrchestrateRequest(BaseModel):
     budget_limit_usd: Optional[float] = None
     proposed_action: Optional[str] = None  # e.g., "write_file", "apply_diff", "exec_shell", "read_file"
     proposed_target: Optional[str] = None
+    # Put the query-independent skeleton first so providers can cache it.
+    cache_layout: bool = True
 
 
 class OrchestrateResponse(BaseModel):
@@ -207,6 +211,8 @@ class OrchestrateResponse(BaseModel):
     expansion_tokens: int = 0
     expansion_rounds: int = 0
     expansion_skipped_reason: Optional[str] = None
+    # Cache-friendly layout: stable skeleton prefix + per-query bodies
+    prompt_cache: Dict[str, Any] = Field(default_factory=dict)
 
 
 class RedTeamRequest(BaseModel):
