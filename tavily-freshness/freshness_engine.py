@@ -14,6 +14,15 @@ import time
 from typing import Dict, List, Optional, Any, Tuple
 import httpx
 
+try:
+    from package_metadata import (
+        PyPIMetadata, distribution_for, major_version, normalize, parse_dependency_pins,
+    )
+except ImportError:  # imported as part of the tavily_freshness package
+    from .package_metadata import (  # type: ignore
+        PyPIMetadata, distribution_for, major_version, normalize, parse_dependency_pins,
+    )
+
 # Modules that ship with Python; calls into these are never freshness claims.
 _STDLIB_MODULES = set(getattr(sys, "stdlib_module_names", ())) | {"__future__"}
 
@@ -35,6 +44,7 @@ class FreshnessEngine:
     KNOWN_DEPRECATIONS: Dict[str, Dict[str, Any]] = {
         "openai.ChatCompletion.create": {
             "library": "openai",
+            "deprecated_in": "1.0.0",
             "deprecated_pattern": "openai.ChatCompletion.create",
             "replacement_pattern": "client.chat.completions.create",
             "delta_t_days": 850.0,
@@ -53,6 +63,7 @@ class FreshnessEngine:
         },
         "openai.Completion.create": {
             "library": "openai",
+            "deprecated_in": "1.0.0",
             "deprecated_pattern": "openai.Completion.create",
             "replacement_pattern": "client.completions.create",
             "delta_t_days": 850.0,
@@ -70,6 +81,7 @@ class FreshnessEngine:
         },
         "langchain.chat_models": {
             "library": "langchain",
+            "deprecated_in": "0.1.0",
             "deprecated_pattern": "from langchain.chat_models import ChatOpenAI",
             "replacement_pattern": "from langchain_openai import ChatOpenAI",
             "delta_t_days": 550.0,
@@ -86,6 +98,7 @@ class FreshnessEngine:
         },
         "langchain.llms": {
             "library": "langchain",
+            "deprecated_in": "0.1.0",
             "deprecated_pattern": "from langchain.llms import OpenAI",
             "replacement_pattern": "from langchain_openai import OpenAI",
             "delta_t_days": 550.0,
@@ -118,6 +131,7 @@ class FreshnessEngine:
         },
         "pydantic.BaseModel.parse_obj": {
             "library": "pydantic",
+            "deprecated_in": "2.0.0",
             "deprecated_pattern": ".parse_obj(",
             "replacement_pattern": ".model_validate(",
             "delta_t_days": 600.0,
@@ -134,6 +148,7 @@ class FreshnessEngine:
         },
         "pydantic.BaseModel.dict": {
             "library": "pydantic",
+            "deprecated_in": "2.0.0",
             "deprecated_pattern": ".dict()",
             "replacement_pattern": ".model_dump()",
             "delta_t_days": 600.0,
@@ -150,6 +165,7 @@ class FreshnessEngine:
         },
         "pandas.DataFrame.append": {
             "library": "pandas",
+            "deprecated_in": "2.0.0",
             "deprecated_pattern": ".append(",
             "replacement_pattern": "pd.concat([",
             "delta_t_days": 650.0,
@@ -192,8 +208,17 @@ class FreshnessEngine:
 
     LIVE_CACHE_TTL_SECONDS = 24 * 3600
 
-    def __init__(self, tavily_api_key: Optional[str] = None):
+    # Each major version a pinned dependency is behind latest lowers A_semantic
+    # by this much: one major behind is a warning, two or more turns STALE.
+    MAJOR_VERSION_AGREEMENT_PENALTY = 0.10
+
+    def __init__(
+        self,
+        tavily_api_key: Optional[str] = None,
+        package_metadata: Optional[PyPIMetadata] = None,
+    ):
         self.tavily_api_key = tavily_api_key or os.getenv("TAVILY_API_KEY")
+        self.pypi = package_metadata or PyPIMetadata()
         # claim -> (fetched_at_epoch, live_result). Avoids spending Tavily
         # credits re-verifying the same API on every turn.
         self._live_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
@@ -430,8 +455,75 @@ class FreshnessEngine:
         self._live_cache[claim] = (now, result)
         return result
 
+    def _ground_with_pypi(
+        self,
+        claim: str,
+        matched: Optional[Dict[str, Any]],
+        pins: Dict[str, str],
+    ) -> Tuple[Optional[float], float, Optional[Dict[str, Any]]]:
+        """
+        Uses real PyPI release dates to ground Equation 5's inputs.
+
+        Returns (delta_t_days or None, agreement_penalty, evidence or None):
+        - Known deprecation: Δt = days since the release that deprecated it
+          (how long the evidence of deprecation has stood).
+        - Pinned dependency: each major version behind latest lowers
+          A_semantic. The pin's age is reported as evidence but not used as Δt:
+          Equation 5 treats Δt as documentation age, and a pin's age would
+          mark nearly every pinned dependency stale.
+        """
+        library = claim.split(".")[0]
+        dist = distribution_for(library)
+        meta = self.pypi.package(dist)
+        if not meta:
+            return None, 0.0, None
+
+        latest = meta.get("latest_version")
+        latest_release = meta.get("latest_release")
+        evidence: Dict[str, Any] = {
+            "source": "pypi",
+            "package": meta.get("name", dist),
+            "url": f"https://pypi.org/project/{dist}/",
+            "latest_version": latest,
+            "latest_release": latest_release.date().isoformat() if latest_release else None,
+        }
+        delta: Optional[float] = None
+        penalty = 0.0
+        pinned = pins.get(normalize(dist))
+        if pinned:
+            evidence["pinned_version"] = pinned
+
+        deprecated_in = (matched or {}).get("deprecated_in")
+        if deprecated_in:
+            released = meta["release_dates"].get(deprecated_in)
+            if released:
+                delta = self.pypi.days_between(released)
+                evidence["deprecated_in"] = deprecated_in
+                evidence["deprecated_since"] = released.date().isoformat()
+                pinned_major, dep_major = major_version(pinned), major_version(deprecated_in)
+                if pinned_major is not None and dep_major is not None and pinned_major < dep_major:
+                    evidence["note"] = (
+                        f"Pinned {dist} {pinned} predates the deprecation; "
+                        f"applying the patch requires upgrading to >= {deprecated_in}."
+                    )
+        elif pinned:
+            pinned_release = meta["release_dates"].get(pinned)
+            if pinned_release and latest_release:
+                evidence["pinned_release"] = pinned_release.date().isoformat()
+                evidence["pinned_behind_latest_days"] = round(
+                    self.pypi.days_between(pinned_release, latest_release), 1
+                )
+            behind = max(0, (major_version(latest) or 0) - (major_version(pinned) or 0))
+            evidence["major_versions_behind"] = behind
+            penalty = self.MAJOR_VERSION_AGREEMENT_PENALTY * behind
+
+        return delta, penalty, evidence
+
     def verify_claim_freshness(
-        self, claim: str, tavily_api_key: Optional[str] = None
+        self,
+        claim: str,
+        tavily_api_key: Optional[str] = None,
+        dependency_pins: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         """
         Queries Tavily Search API (cached) or evaluates against the curated
@@ -441,8 +533,10 @@ class FreshnessEngine:
         api_key = tavily_api_key or self.tavily_api_key
         matched_deprecation = self.match_known_deprecation(claim)
 
+        # Registry hits are already verified deprecations; spend Tavily
+        # credits only on APIs the registry doesn't know about.
         live_result = None
-        if self._has_live_key(api_key):
+        if self._has_live_key(api_key) and not matched_deprecation:
             live_result = self._cached_live_query(claim, api_key)
 
         if live_result:
@@ -480,6 +574,24 @@ class FreshnessEngine:
                     "snippet": doc_snippets[0],
                 }
             ]
+
+        grounded_delta, agreement_penalty, evidence = self._ground_with_pypi(
+            claim, matched_deprecation, dependency_pins or {}
+        )
+        if grounded_delta is not None:
+            delta_t_days = round(grounded_delta, 1)
+        if agreement_penalty:
+            semantic_agreement = max(0.0, semantic_agreement - agreement_penalty)
+        if evidence:
+            sources = list(sources) + [{
+                "title": f"PyPI: {evidence['package']} {evidence.get('latest_version') or ''}".strip(),
+                "url": evidence["url"],
+                "snippet": (
+                    f"Deprecated in {evidence['deprecated_in']} (released {evidence['deprecated_since']})."
+                    if evidence.get("deprecated_in")
+                    else f"Latest release {evidence.get('latest_release')}."
+                ),
+            }]
 
         score = self.calculate_empirical_freshness(
             delta_t_days=delta_t_days,
@@ -523,6 +635,7 @@ class FreshnessEngine:
             "sources": sources,
             "documentation_snippets": doc_snippets,
             "patch": patch,
+            "evidence": evidence,
         }
 
     def _evidence_terms(self, claim: str) -> List[str]:
@@ -772,7 +885,10 @@ class FreshnessEngine:
         return patched_code, applied_patches
 
     def audit_and_patch(
-        self, generated_code: str, tavily_api_key: Optional[str] = None
+        self,
+        generated_code: str,
+        tavily_api_key: Optional[str] = None,
+        dependency_pins: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         """
         Full lifecycle:
@@ -786,12 +902,17 @@ class FreshnessEngine:
         if self._has_live_key(api_key) and len(claims) > 1:
             with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(claims))) as pool:
                 verifications = list(pool.map(
-                    lambda c: self.verify_claim_freshness(c["claim"], tavily_api_key=api_key),
+                    lambda c: self.verify_claim_freshness(
+                        c["claim"], tavily_api_key=api_key, dependency_pins=dependency_pins
+                    ),
                     claims,
                 ))
         else:
             verifications = [
-                self.verify_claim_freshness(c["claim"], tavily_api_key=api_key) for c in claims
+                self.verify_claim_freshness(
+                    c["claim"], tavily_api_key=api_key, dependency_pins=dependency_pins
+                )
+                for c in claims
             ]
 
         patched_code, applied_patches = self.auto_patch_code(generated_code, verifications)
