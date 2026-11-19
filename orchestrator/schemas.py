@@ -22,23 +22,23 @@ class ModelPricing(BaseModel):
     """
     input_per_mtok: float = Field(..., description="Cost in USD per 1M input tokens")
     output_per_mtok: float = Field(..., description="Cost in USD per 1M output tokens")
+    cache_read_per_mtok: Optional[float] = Field(
+        None, description="Cost per 1M prompt-cache read tokens (defaults to 0.1x input)"
+    )
+    cache_write_per_mtok: Optional[float] = Field(
+        None, description="Cost per 1M prompt-cache write tokens (defaults to 1.25x input)"
+    )
+
+    @property
+    def cache_read_rate(self) -> float:
+        return self.cache_read_per_mtok if self.cache_read_per_mtok is not None else 0.1 * self.input_per_mtok
+
+    @property
+    def cache_write_rate(self) -> float:
+        return self.cache_write_per_mtok if self.cache_write_per_mtok is not None else 1.25 * self.input_per_mtok
 
 
-# Default Pricing Registry
-DEFAULT_MODEL_PRICING: Dict[ModelTier, ModelPricing] = {
-    ModelTier.TIER_2_FRONTIER: ModelPricing(
-        input_per_mtok=3.00,
-        output_per_mtok=15.00
-    ),
-    ModelTier.TIER_1_MICRO: ModelPricing(
-        input_per_mtok=0.25,
-        output_per_mtok=1.25
-    ),
-    ModelTier.TIER_0_LOCAL: ModelPricing(
-        input_per_mtok=0.00,
-        output_per_mtok=0.00
-    ),
-}
+# Per-tier prices and model IDs live in orchestrator/model_registry.py.
 
 
 class ASTNode(BaseModel):

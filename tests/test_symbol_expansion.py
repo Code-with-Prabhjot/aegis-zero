@@ -80,20 +80,30 @@ def test_both_rounds_are_billed():
     assert abs(state.cumulative_cost_usd - data["cost_usd"]) < 1e-6
 
 
-def test_expansion_skipped_when_budget_cannot_cover_it():
+def test_expansion_skipped_when_budget_cannot_cover_it(monkeypatch):
     client = TestClient(app)
-    # Enough for the first call's worst case but not a second, larger one.
-    pruner = ASTPruner()
-    first_input = max(pruner.count_tokens(SOURCE) // 4, 100)
-    tight = (first_input + 1600) * 3.0 / 1_000_000 + 1500 * 15.0 / 1_000_000
-    data = _run(client, "expand_budget", budget_usd=tight)
+    monkeypatch.setattr(main_mod.ledger, "can_afford", lambda *a, **kw: False)
+    data = _run(client, "expand_budget")
 
     assert data["status"] != "HALTED"
     assert data["expansion_rounds"] == 0
     assert data["expansion_skipped_reason"] == "BUDGET"
     state = main_mod.ledger.get_session("expand_budget")
-    assert state.cumulative_cost_usd <= tight + 1e-9
     assert state.is_halted is False
+    # The round that asked was still billed exactly once.
+    assert abs(state.cumulative_cost_usd - data["cost_usd"]) < 1e-9
+
+
+def test_can_afford_is_non_mutating():
+    from orchestrator.budget_ledger import BudgetLedger
+    from orchestrator.schemas import ModelTier
+
+    ledger = BudgetLedger()
+    ledger.register_session("afford", user_limit_usd=0.001, session_limit_usd=0.001)
+    assert ledger.can_afford("afford", 10_000_000, ModelTier.TIER_2_FRONTIER) is False
+    state = ledger.get_session("afford")
+    assert state.is_halted is False and state.recovery_checkpoint is None
+    assert ledger.can_afford("afford", 10, ModelTier.TIER_0_LOCAL) is True
 
 
 def test_no_expansion_instructions_when_nothing_is_stubbed():

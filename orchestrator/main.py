@@ -41,6 +41,7 @@ from orchestrator.schemas import (
     RedTeamRequest,
     RedTeamResponse,
 )
+from orchestrator import model_registry
 from orchestrator.ast_pruner import ASTPruner
 from orchestrator.budget_ledger import BudgetLedger
 from orchestrator.bifrost_client import BifrostClient
@@ -175,7 +176,7 @@ async def get_telemetry():
         "cumulative_tokens_saved": total_tokens_saved_cumulative,
         "cumulative_cost_usd": round(total_spent, 6),
         "active_model_tier": ModelTier.TIER_2_FRONTIER.value,
-        "active_model": "claude-3-5-sonnet",
+        "active_model": model_registry.FRONTIER_MODEL,
         "remaining_budget_usd": round(remaining_budget, 6),
         "circuit_breaker_status": "OPEN" if cb_status.get("chaos_fault_code") else "CLOSED",
         "circuit_breaker_stats": cb_status,
@@ -206,13 +207,13 @@ async def inject_chaos(req: ChaosInjectRequest):
     audit_ledger.append_entry(
         event_type="CHAOS_INJECTED",
         actor="chaos_simulator",
-        payload={"status_code": req.status_code, "target_model": req.target_model or "claude-3-5-sonnet"},
+        payload={"status_code": req.status_code, "target_model": req.target_model or model_registry.FRONTIER_MODEL},
     )
 
     event = {
         "type": "CHAOS_INJECTED",
         "status_code": req.status_code,
-        "target_model": req.target_model or "primary (claude-3-5-sonnet)",
+        "target_model": req.target_model or f"primary ({model_registry.FRONTIER_MODEL})",
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
     await telemetry_hub.broadcast(event)
@@ -220,7 +221,7 @@ async def inject_chaos(req: ChaosInjectRequest):
     return {
         "status": "CHAOS_INJECTED",
         "status_code": req.status_code,
-        "target_model": req.target_model or "claude-3-5-sonnet",
+        "target_model": req.target_model or model_registry.FRONTIER_MODEL,
     }
 
 

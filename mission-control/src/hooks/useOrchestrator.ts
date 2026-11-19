@@ -10,6 +10,14 @@ import {
   TelemetryState,
 } from "@/types";
 
+// Model labels shown in the workbench. Keep in sync with orchestrator/model_registry.py
+// (override per deployment with NEXT_PUBLIC_AEGIS_*_MODEL).
+const MODELS = {
+  frontier: process.env.NEXT_PUBLIC_AEGIS_FRONTIER_MODEL ?? "claude-opus-5-5",
+  fallback: process.env.NEXT_PUBLIC_AEGIS_FALLBACK_MODEL ?? "gpt-5.6",
+  micro: process.env.NEXT_PUBLIC_AEGIS_MICRO_MODEL ?? "claude-haiku-5-5",
+};
+
 const INITIAL_NODES: ASTGraphNode[] = [
   {
     id: "n_auth",
@@ -326,7 +334,7 @@ def verify_session_handshake(auth_token, session_id):
 export function useOrchestrator() {
   const [telemetry, setTelemetry] = useState<TelemetryState>({
     gatewayStatus: "ONLINE",
-    activeModel: "claude-3-5-sonnet-20241022",
+    activeModel: MODELS.frontier,
     activeTier: "tier-2-frontier",
     tokenSavingsPct: 84.2,
     cumulativeCostUsd: 0.0418,
@@ -367,21 +375,21 @@ export function useOrchestrator() {
               setTelemetry((prev) => ({
                 ...prev,
                 gatewayStatus: "CHAOS_INJECTED",
-                activeModel: "gpt-4o",
+                activeModel: MODELS.fallback,
                 activeTier: "tier-2-frontier",
                 circuitBreakerTripped: true,
                 failoverLatencyMs: 138,
               }));
-              setFailoverToast("HTTP 429 INJECTED -> Bifrost Failover: claude-3-5-sonnet -> gpt-4o (138ms)");
+              setFailoverToast(`HTTP 429 INJECTED -> Bifrost Failover: ${MODELS.frontier} -> ${MODELS.fallback} (138ms)`);
             } else if (data.type === "CHAOS_RESET") {
               setTelemetry((prev) => ({
                 ...prev,
                 gatewayStatus: "ONLINE",
-                activeModel: "claude-3-5-sonnet-20241022",
+                activeModel: MODELS.frontier,
                 activeTier: "tier-2-frontier",
                 circuitBreakerTripped: false,
               }));
-              setFailoverToast("Primary Frontier Model Restored (claude-3-5-sonnet)");
+              setFailoverToast(`Primary Frontier Model Restored (${MODELS.frontier})`);
             } else if (data.type === "BUDGET_CAP_HALT") {
               setTelemetry((prev) => ({
                 ...prev,
@@ -442,7 +450,7 @@ export function useOrchestrator() {
     setTelemetry((prev) => ({
       ...prev,
       gatewayStatus: "CHAOS_INJECTED",
-      activeModel: "gpt-4o",
+      activeModel: MODELS.fallback,
       circuitBreakerTripped: true,
       failoverLatencyMs: 138,
     }));
@@ -462,7 +470,7 @@ export function useOrchestrator() {
     setTelemetry((prev) => ({
       ...prev,
       gatewayStatus: "ONLINE",
-      activeModel: "claude-3-5-sonnet-20241022",
+      activeModel: MODELS.frontier,
       activeTier: "tier-2-frontier",
       circuitBreakerTripped: false,
     }));
@@ -482,10 +490,10 @@ export function useOrchestrator() {
         activeModel = "deepseek-coder-v2 (local enclave)";
       } else if (remaining < 0.08) {
         targetTier = "tier-1-micro";
-        activeModel = "haiku-3.5 / gpt-4o-mini (down-routed)";
+        activeModel = `${MODELS.micro} (down-routed)`;
       } else if (!prev.circuitBreakerTripped) {
         targetTier = "tier-2-frontier";
-        activeModel = "claude-3-5-sonnet-20241022";
+        activeModel = MODELS.frontier;
       }
 
       return {
@@ -592,7 +600,7 @@ export function useOrchestrator() {
     setTelemetry((prev) => ({
       ...prev,
       gatewayStatus: "ONLINE",
-      activeModel: "claude-3-5-sonnet-20241022",
+      activeModel: MODELS.frontier,
       activeTier: "tier-2-frontier",
       airGapLock: false,
       tokenSavingsPct: 84.2,
@@ -617,7 +625,7 @@ export function useOrchestrator() {
         activeTier: willLock ? "tier-0-local" : "tier-2-frontier",
         activeModel: willLock
           ? "deepseek-coder-v2 (air-gapped local enclave)"
-          : "claude-3-5-sonnet-20241022",
+          : MODELS.frontier,
       };
     });
     setFailoverToast(

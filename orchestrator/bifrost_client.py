@@ -17,6 +17,7 @@ from typing import Dict, List, Optional, Any
 import httpx
 import tiktoken
 
+from orchestrator import model_registry
 from orchestrator.schemas import (
     ModelTier,
     CircuitBreakerState,
@@ -81,21 +82,10 @@ class BifrostClient:
     Enforces automatic circuit breaker failovers in <180ms with dynamic header injection.
     """
 
-    DEFAULT_FRONTIER_CHAIN = [
-        {"model": "claude-3-5-sonnet", "tier": ModelTier.TIER_2_FRONTIER, "provider": "anthropic"},
-        {"model": "gpt-4o", "tier": ModelTier.TIER_2_FRONTIER, "provider": "openai"},
-        {"model": "deepseek-coder-v2", "tier": ModelTier.TIER_0_LOCAL, "provider": "ollama"},
-    ]
-
-    DEFAULT_MICRO_CHAIN = [
-        {"model": "llama-3.1-8b-instant", "tier": ModelTier.TIER_1_MICRO, "provider": "groq"},
-        {"model": "gpt-4o-mini", "tier": ModelTier.TIER_1_MICRO, "provider": "openai"},
-        {"model": "deepseek-coder-v2", "tier": ModelTier.TIER_0_LOCAL, "provider": "ollama"},
-    ]
-
-    AIRGAP_CHAIN = [
-        {"model": "deepseek-coder-v2", "tier": ModelTier.TIER_0_LOCAL, "provider": "ollama"},
-    ]
+    # Model IDs come from orchestrator/model_registry.py (env-configurable).
+    DEFAULT_FRONTIER_CHAIN = model_registry.frontier_chain()
+    DEFAULT_MICRO_CHAIN = model_registry.micro_chain()
+    AIRGAP_CHAIN = model_registry.airgap_chain()
 
     def __init__(
         self,
@@ -270,7 +260,7 @@ class BifrostClient:
 
         # 1. Chaos Simulator Check
         if self.chaos_fault_code is not None:
-            fault_target = self.chaos_target_model or "claude-3-5-sonnet"
+            fault_target = self.chaos_target_model or model_registry.FRONTIER_MODEL
             if fault_target in ("*", "all") or fault_target == model_name:
                 raise httpx.HTTPStatusError(
                     message=f"Chaos Injected Outage ({self.chaos_fault_code}) on {model_name}",
@@ -452,7 +442,7 @@ class BifrostClient:
 
         # If all candidates exhausted, emergency fallback to local deterministic mock
         emergency_tier = ModelTier.TIER_0_LOCAL
-        emergency_model = "deepseek-coder-v2"
+        emergency_model = model_registry.LOCAL_MODEL
         mock_content = await self._mock_model_generate(emergency_model, emergency_tier, messages)
         p_tokens = self.count_tokens(" ".join(m.get("content", "") for m in messages))
         c_tokens = self.count_tokens(mock_content)
