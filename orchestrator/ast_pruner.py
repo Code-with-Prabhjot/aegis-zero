@@ -320,6 +320,7 @@ class ASTPruner:
             "compression_ratio": round(compression_ratio, 4),
             "selected_nodes": selected_names,
             "stubbed_nodes": stubbed_names,
+            "selected_node_ids": list(selected_for_full),
         }
 
         return hybrid_code, metrics
