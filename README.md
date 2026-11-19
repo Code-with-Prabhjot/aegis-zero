@@ -5,8 +5,8 @@
 **Dual-Track Grand Slam Architecture: PS-01 (Bifrost) &bull; PS-06 (Tavily) &bull; Omnidimension &bull; Pathway**
 
 [![Track](https://img.shields.io/badge/Track-PS--01_Bifrost_+_PS--06_Tavily_Dual--Stack-7928CA.svg?style=for-the-badge)](https://hackculture.io/hackathons/ai-global-hackathon)
-[![Tests](https://img.shields.io/badge/Tests-35%2F35_Passing-10b981.svg?style=for-the-badge)](https://github.com)
-[![Token Reduction](https://img.shields.io/badge/AST_Compression--84.2%25_Tokens-d946ef.svg?style=for-the-badge)](https://github.com)
+[![CI](https://github.com/Code-with-Prabhjot/aegis-zero/actions/workflows/ci.yml/badge.svg)](https://github.com/Code-with-Prabhjot/aegis-zero/actions/workflows/ci.yml)
+[![Token Reduction](https://img.shields.io/badge/Context-%E2%88%9274%25_tokens_%C2%B7_93%25_recall-d946ef.svg?style=for-the-badge)](#5-empirical-benchmarks)
 [![Failover](https://img.shields.io/badge/Circuit_Breaker-%3C180ms_Failover-06b6d4.svg?style=for-the-badge)](https://github.com)
 [![Privacy Lock](https://img.shields.io/badge/AirGap_Lock-Zero_WAN_Egress-ef4444.svg?style=for-the-badge)](https://github.com)
 [![Deadline](https://img.shields.io/badge/Deadline-Nov_21,_2026_11:59_PM_IST-ff007f.svg?style=for-the-badge)](https://forms.gle/8fafao1ymEpihgKd9)
@@ -243,6 +243,24 @@ AEGIS-0 integrates Tavily to bridge the LLM knowledge cutoff:
 
 ## 5. Empirical Benchmarks
 
+### Reproducible in-repo benchmark
+
+Run `python aegis_cli.py --benchmark` (also runs in CI). Compression alone can be gamed by stubbing
+everything, so the benchmark also reports **recall at budget**: for 14 labelled questions about this
+repository (`evals/pruning_eval.py`), does the full body of every symbol needed to answer survive pruning?
+
+| Metric (this repo, calibrated budget ≈ 25% of raw) | Before method-level + BM25 pruning | Now |
+|:---|:---:|:---:|
+| Mean recall @ budget (questions answerable from pruned context) | 35.7% | **92.9%** (13/14) |
+| Mean compression on the same questions | 57.2% | **73.8%** |
+| Module compression: `orchestrator` / `security-gate` / `tavily-freshness` | — | 74.4% / 73.5% / 74.3% |
+| Pruned buffers that parse as valid Python | 100% | 100% |
+
+Compression is largely set by the calibrated budget; recall is the quality signal. The test suite
+enforces a floor of ≥ 85% recall and ≥ 70% compression.
+
+### Original evaluation
+
 Extensively evaluated across 5 representative open-source and financial codebases:
 
 | Metric | Industry Baseline (Raw Context) | AEGIS-0 Dual-Stack Engine | Delta / Improvement |
@@ -270,12 +288,18 @@ aegis-zero/
 │   ├── budget_ledger.py             # Pre-Flight Token Cost Bounds & Hard-Halt Machine
 │   ├── bifrost_client.py            # Gateway Client with <180ms Circuit Breakers
 │   ├── schemas.py                   # Pydantic v2 Domain Models & Tiers
+│   ├── model_registry.py            # Env-configurable model IDs & per-tier prices
+│   ├── workspace.py                 # Confined workspace for approved writes + rollback
+│   ├── receipts.py                  # Per-run token receipts (JSON / HTML, SHA-256 sealed)
 │   └── requirements.txt             # Backend Dependencies (rich, reportlab, tiktoken, etc.)
 ├── security-gate/                   # Zero-Trust Privacy Guard & Audit Trail
 │   ├── privacy_guard.py             # Shannon Entropy H>=4.5, Regex Keys & Anti-Obfuscation
 │   └── audit_trail.py               # Immutable SHA-256 Tamper-Evident Audit Ledger & Rollback
 ├── tavily-freshness/                # PS-06 Freshness Engine
-│   └── freshness_engine.py          # Claim Extraction, Equation 5 F(c_j), Auto-Patch
+│   ├── freshness_engine.py          # Claim Extraction, Equation 5 F(c_j), Auto-Patch
+│   └── package_metadata.py          # PyPI release dates & version pins grounding F(c_j)
+├── evals/
+│   └── pruning_eval.py              # Recall@budget retrieval-quality harness
 ├── mission-control/                 # Next.js 14 Mission Control Workbench
 │   ├── src/app/page.tsx             # Approved Cosmic Landing Page & 3D Interactive Orb
 │   ├── src/app/workbench/page.tsx   # 3-Stage Zero-Scroll 100vh Mission Control + Live Command Bar
@@ -283,7 +307,7 @@ aegis-zero/
 │   └── src/hooks/useOrchestrator.ts # WebSocket Hook & Live Dogfooding Runner
 ├── scripts/                         # Build & Presentation Automation
 │   └── build_pitch_deck.py          # 16:9 Widescreen Pitch Deck Generator
-├── tests/                           # 35-Test Automated Pytest Suite
+├── tests/                           # 100+ test pytest suite (CI on Python 3.10 & 3.12)
 │   ├── test_phase1_core.py          # 6 Core Architectural Unit Tests
 │   ├── test_phase2_integration.py   # 8 Full-Pipeline & WebSocket Integration Tests
 │   ├── test_phase3_redteam.py       # 6 Adversarial Red-Team & Live Dogfooding Tests
@@ -340,6 +364,22 @@ Open **[http://localhost:3000/workbench](http://localhost:3000/workbench)**.
 
 ---
 
+### Configuration
+
+Copy `orchestrator/.env.example` and `mission-control/.env.example`. The most useful settings:
+
+| Variable | Default | Purpose |
+|:---|:---|:---|
+| `AEGIS_FRONTIER_MODEL` / `AEGIS_MICRO_MODEL` | `claude-opus-5-5` / `claude-haiku-5-5` | Models per tier (prices in `orchestrator/model_registry.py`) |
+| `AEGIS_FALLBACK_MODEL` | `gpt-5.6` | Cross-provider failover target (verify against your provider's model list) |
+| `AEGIS_WORKSPACE_ROOT` | `.aegis-workspace/` | Where approved writes land; point at a real checkout to apply changes there |
+| `AEGIS_SECRET_KEY` | dev default | HMAC key for the action gate (**set in production**) |
+| `AEGIS_CORS_ORIGINS` | `http://localhost:3000` | Browser origins allowed to call the orchestrator |
+| `AEGIS_PYPI_OFFLINE` | `0` | Set to `1` to disable PyPI lookups (offline demos) |
+| `NEXT_PUBLIC_AEGIS_API` | `http://localhost:8000` | Orchestrator URL used by the workbench |
+
+---
+
 ## 8. CLI Agent Usage
 
 Execute AEGIS-0 directly from your terminal:
@@ -362,58 +402,23 @@ python aegis_cli.py --audit-export
 
 # 6. Execute Atomic Rollback of quarantined action & verify chain integrity
 python aegis_cli.py --rollback
+
+# 7. Write a token receipt for a run (JSON, or HTML if the path ends in .html)
+python aegis_cli.py "Audit orchestrator token efficiency" --repo ./orchestrator --dry-run --receipt receipt.html
 ```
 
 ---
 
 ## 9. Verification & Test Suite
 
-AEGIS-0 includes a comprehensive 35-test test suite spanning core unit tests, full integration flows, adversarial red-team simulations, deep-tech edge-case hardening, and adjudicator stress tests:
+The pytest suite covers unit, integration, red-team, hardening and adjudicator flows, plus
+regression suites for the action gate (forgery, replay, expiry, CORS), freshness precision and PyPI
+grounding, pruner determinism and granularity, retrieval recall, on-demand expansion, workspace writes
+and rollback, prompt-cache layout, and receipts. CI runs it on Python 3.10 and 3.12 along with the
+frontend type-check and build.
 
 ```bash
-# Run all 35 tests with full verbosity
-.venv\Scripts\python.exe -m pytest tests/ -v
-```
-
-Expected output:
-```text
-tests/test_phase1_core.py::test_budget_ledger_worst_case_reservation PASSED
-tests/test_phase1_core.py::test_budget_ledger_dynamic_down_routing PASSED
-tests/test_phase1_core.py::test_budget_ledger_hard_halt PASSED
-tests/test_phase1_core.py::test_ast_stubbing_compression PASSED
-tests/test_phase1_core.py::test_privacy_guard_entropy_and_taint PASSED
-tests/test_phase1_core.py::test_hmac_action_gate PASSED
-tests/test_phase2_integration.py::test_bifrost_circuit_breaker_failover PASSED
-tests/test_phase2_integration.py::test_tavily_freshness_scoring_and_autopatch PASSED
-tests/test_phase2_integration.py::test_end_to_end_orchestrate_pipeline PASSED
-tests/test_phase2_integration.py::test_action_approval_gate_lifecycle PASSED
-tests/test_phase2_integration.py::test_zero_trust_airgap_lock_on_tainted_context PASSED
-tests/test_phase2_integration.py::test_orchestrator_budget_cap_hard_halt PASSED
-tests/test_phase2_integration.py::test_websocket_telemetry_stream PASSED
-tests/test_phase2_integration.py::test_chaos_api_endpoints PASSED
-tests/test_phase3_redteam.py::test_indirect_readme_prompt_injection_blocked PASSED
-tests/test_phase3_redteam.py::test_high_entropy_secret_forces_airgap_enclave PASSED
-tests/test_phase3_redteam.py::test_aegis_policy_yml_confidential_lock PASSED
-tests/test_phase3_redteam.py::test_live_self_dogfooding_orchestrate_on_orchestrator_dir PASSED
-tests/test_phase3_redteam.py::test_redteam_endpoint_containment PASSED
-tests/test_phase3_redteam.py::test_cli_agent_execution PASSED
-tests/test_phase4_hardening.py::test_ast_circular_dependency_bfs_no_infinite_loop PASSED
-tests/test_phase4_hardening.py::test_ast_malformed_syntax_graceful_fallback PASSED
-tests/test_phase4_hardening.py::test_privacy_guard_clean_repo_no_false_positive PASSED
-tests/test_phase4_hardening.py::test_privacy_guard_base64_secret_smuggling_blocked PASSED
-tests/test_phase4_hardening.py::test_privacy_guard_unicode_zero_width_injection_blocked PASSED
-tests/test_phase4_hardening.py::test_audit_ledger_hash_chain_and_tamper_detection PASSED
-tests/test_phase4_hardening.py::test_api_audit_export_and_rollback_lifecycle PASSED
-tests/test_phase4_hardening.py::test_redteam_obfuscated_vectors_api PASSED
-tests/test_phase5_adjudicator.py::test_multi_session_budget_isolation PASSED
-tests/test_phase5_adjudicator.py::test_pathway_streaming_ast_cache_and_delta_update PASSED
-tests/test_phase5_adjudicator.py::test_tavily_multi_library_simultaneous_autopatch PASSED
-tests/test_phase5_adjudicator.py::test_bifrost_circuit_breaker_multi_model_failover_resilience PASSED
-tests/test_phase5_adjudicator.py::test_audit_ledger_merkle_continuity_post_rollback PASSED
-tests/test_phase5_adjudicator.py::test_cli_benchmark_and_audit_modes PASSED
-tests/test_phase5_adjudicator.py::test_streaming_index_api_endpoint PASSED
-
-======================== 35 passed in 4.49s ========================
+python -m pytest tests -q
 ```
 
 ---
@@ -443,7 +448,7 @@ AEGIS-0 is fully synchronized with the updated **Geek Room Global AI Hackathon T
 | **Compulsory Verification Action** | **Compulsory GitHub Star on `maximhq/bifrost`** (`https://github.com/maximhq/bifrost`) with member GitHub usernames recorded | ✅ Verified |
 | **Double Win Eligibility** | Confirmed by organizers: *"Double Win: A team can win prizes from both tracks!"* Eligible for both Bifrost ($1,000 Cash + Interviews) and Tavily (60,000 Credits) pools simultaneously. | ✅ Verified |
 | **Deliverables Package** | Public GitHub Repo + [8-Slide Pitch Deck](docs/AEGIS_0_Pitch_Deck.pdf) (<5 MB, 16:9 Cosmic Violet) + [180s Demo Walkthrough Script](docs/DEMO_SCRIPT.md) | ✅ Verified |
-| **Automated Verification** | **35 / 35 Automated Pytest Suite Passing (100%)** spanning unit, integration, red-team, hardening, and adjudicator suites | ✅ Verified |
+| **Automated Verification** | **Full pytest suite green in CI** (Python 3.10 & 3.12) spanning unit, integration, red-team, hardening, adjudicator and regression suites | ✅ Verified |
 
 ---
 
