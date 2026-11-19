@@ -331,6 +331,45 @@ async def run_cli(
     return 0
 
 
+def run_retrieval_eval(pruner: Optional[ASTPruner] = None) -> Dict[str, float]:
+    """
+    Prints recall@budget on the labelled question set: does the pruned
+    context still contain the code needed to answer each question?
+    """
+    from orchestrator.pruning_eval import run_eval
+
+    results, summary = run_eval(pruner=pruner)
+
+    t_eval = Table(title="Retrieval Quality: Recall @ Token Budget", border_style="magenta")
+    t_eval.add_column("Module", style="bold white")
+    t_eval.add_column("Question", style="dim white")
+    t_eval.add_column("Pruned Tokens", style="cyan", justify="right")
+    t_eval.add_column("Compression", style="magenta", justify="right")
+    t_eval.add_column("Required Code Kept", justify="center")
+
+    for r in results:
+        t_eval.add_row(
+            r.case.repo,
+            r.case.query if len(r.case.query) <= 60 else r.case.query[:57] + "...",
+            f"{r.pruned_tokens:,}",
+            f"-{r.compression * 100:.1f}%",
+            "[green]YES[/green]" if r.recall == 1.0 else f"[red]MISSED {', '.join(r.missed)}[/red]",
+        )
+
+    console.print(t_eval)
+    console.print(
+        Panel(
+            f"[bold magenta]MEAN RECALL @ BUDGET: {summary['mean_recall'] * 100:.1f}%[/bold magenta]   "
+            f"[bold green]MEAN COMPRESSION: -{summary['mean_compression'] * 100:.1f}%[/bold green]\n"
+            f"[dim]{summary['cases']} labelled questions over this repository. A question counts as answered "
+            f"only if the full body of every required symbol survives pruning.[/dim]",
+            border_style="magenta",
+            padding=(0, 2),
+        )
+    )
+    return summary
+
+
 def run_benchmark() -> int:
     """
     Executes submodular knapsack AST token compression benchmarks across repository modules.
@@ -408,6 +447,8 @@ def run_benchmark() -> int:
             padding=(0, 2),
         )
     )
+
+    run_retrieval_eval(pruner)
     return 0
 
 
