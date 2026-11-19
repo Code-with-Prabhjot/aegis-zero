@@ -26,7 +26,7 @@ SECURITY_GATE_DIR = os.path.join(REPO_ROOT, "security-gate")
 if SECURITY_GATE_DIR not in sys.path:
     sys.path.insert(0, SECURITY_GATE_DIR)
 
-TAVILY_FRESHNESS_DIR = os.path.join(REPO_ROOT, "tavily-freshness")
+TAVILY_FRESHNESS_DIR = os.path.join(REPO_ROOT, "tavily_freshness")
 if TAVILY_FRESHNESS_DIR not in sys.path:
     sys.path.insert(0, TAVILY_FRESHNESS_DIR)
 
@@ -47,11 +47,14 @@ from orchestrator.bifrost_client import BifrostClient
 from orchestrator.pathway_stream import StreamingASTIndex
 from privacy_guard import PrivacyGuard
 from freshness_engine import FreshnessEngine
+import secrets
 from audit_trail import TamperEvidentAuditLedger
 
 # Institutional Shared Secret for HMAC Cryptographic Gates
-AEGIS_SECRET_KEY = os.getenv(
-    "AEGIS_SECRET_KEY", "REDACTED_HISTORICAL_HMAC_FALLBACK"
+AEGIS_SECRET_KEY = (
+    os.getenv("AEGIS_HMAC_SECRET")
+    or os.getenv("AEGIS_SECRET_KEY")
+    or secrets.token_hex(32)
 )
 
 app = FastAPI(

@@ -18,6 +18,7 @@ interface Panel2Props {
   onTriggerChaos: () => void;
   onResetChaos: () => void;
   onUpdateBudget: (amount: number) => void;
+  mode?: "simple" | "developer";
 }
 
 export function Panel2_ChaosBudget({
@@ -25,6 +26,7 @@ export function Panel2_ChaosBudget({
   onTriggerChaos,
   onResetChaos,
   onUpdateBudget,
+  mode = "simple",
 }: Panel2Props) {
   const isChaos =
     telemetry.gatewayStatus === "CHAOS_INJECTED" || telemetry.circuitBreakerTripped;
@@ -133,67 +135,105 @@ export function Panel2_ChaosBudget({
             )}
           </div>
 
-          {/* Visual Multi-Tier Routing Chain */}
-          <div className="space-y-2 pt-2 border-t border-purple-500/20">
-            <span className="text-[10px] font-mono text-purple-300/60 uppercase block">
-              Multi-Tier Routing Chain Topology:
-            </span>
-            <div className="grid grid-cols-2 gap-2 text-xs font-mono">
-              {/* Tier 1 Primary */}
-              <div
-                className={`p-2.5 rounded-xl border transition-all ${
-                  !isChaos
-                    ? "bg-purple-950/60 border-cosmicFuchsia/80 text-white shadow-[0_0_12px_rgba(217,70,239,0.3)]"
-                    : "bg-[#090514]/60 border-purple-900/30 text-purple-400/40 line-through"
-                }`}
-              >
-                <div className="flex items-center justify-between text-[10px] text-purple-300/70 mb-1">
-                  <span>1. Primary Frontier</span>
-                  {!isChaos && (
-                    <span className="w-2 h-2 rounded-full bg-brandGreen shadow-[0_0_6px_#10b981]" />
-                  )}
+          {/* Visual Multi-Tier Routing Chain (Developer) or Clean Status Card (Simple) */}
+          {mode === "simple" ? (
+            <div className="bg-[#120a26]/80 p-4 rounded-xl border border-purple-500/20 space-y-2.5">
+              <span className="text-[10px] font-mono uppercase text-purple-300/60 block">
+                Live Active Provider Status:
+              </span>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <span
+                    className={`w-3 h-3 rounded-full flex-shrink-0 ${
+                      isChaos
+                        ? "bg-amber-400 shadow-[0_0_8px_#f59e0b] animate-pulse"
+                        : "bg-brandGreen shadow-[0_0_8px_#10b981]"
+                    }`}
+                  />
+                  <div>
+                    <h4 className="text-sm font-bold text-white font-mono">
+                      {isChaos ? "OpenAI GPT-4o (Failover)" : "Claude 3.5 Sonnet (Primary)"}
+                    </h4>
+                    <p className="text-xs text-purple-300/70">
+                      {isChaos
+                        ? "Sub-180ms failover engaged · Zero session loss"
+                        : "Primary frontier active · Full capacity"}
+                    </p>
+                  </div>
                 </div>
-                <p className="font-bold text-xs truncate">Claude 3.5 Sonnet</p>
-                <span className="text-[9px] text-purple-400/60">Tier-2 Frontier</span>
-              </div>
-
-              {/* Tier 2 Secondary Failover */}
-              <div
-                className={`p-2.5 rounded-xl border transition-all ${
-                  isChaos
-                    ? "bg-amber-950/70 border-amber-500/80 text-amber-200 shadow-[0_0_15px_rgba(245,158,11,0.35)]"
-                    : "bg-[#090514]/60 border-purple-900/30 text-purple-400/40"
-                }`}
-              >
-                <div className="flex items-center justify-between text-[10px] text-purple-300/70 mb-1">
-                  <span>2. Secondary Failover</span>
-                  {isChaos && (
-                    <span className="w-2 h-2 rounded-full bg-brandAmber shadow-[0_0_6px_#f59e0b] animate-pulse" />
-                  )}
-                </div>
-                <p className="font-bold text-xs truncate">OpenAI GPT-4o</p>
-                <span className="text-[9px] text-amber-300/70">Sub-180ms Auto-Route</span>
-              </div>
-
-              {/* Tier 3 Micro Fast Fallback */}
-              <div className="p-2.5 rounded-xl border bg-[#090514]/60 border-purple-900/30 text-purple-300/70">
-                <div className="flex items-center justify-between text-[10px] text-purple-400/60 mb-1">
-                  <span>3. High-Speed Fallback</span>
-                </div>
-                <p className="font-bold text-xs truncate">Groq Llama-3.3-70B</p>
-                <span className="text-[9px] text-purple-400/60">Tier-1 Micro (&lt;$0.08)</span>
-              </div>
-
-              {/* Tier 4 Air-Gapped Local */}
-              <div className="p-2.5 rounded-xl border bg-[#090514]/60 border-purple-900/30 text-purple-300/70">
-                <div className="flex items-center justify-between text-[10px] text-purple-400/60 mb-1">
-                  <span>4. Air-Gapped Enclave</span>
-                </div>
-                <p className="font-bold text-xs truncate">Local Ollama Llama-3</p>
-                <span className="text-[9px] text-purple-400/60">Tier-0 Air-Gap Lock</span>
+                <span
+                  className={`text-xs font-mono font-bold px-2.5 py-1 rounded-full ${
+                    isChaos
+                      ? "bg-amber-950 text-amber-300 border border-amber-500/60"
+                      : "bg-emerald-950 text-emerald-300 border border-emerald-500/60"
+                  }`}
+                >
+                  {isChaos ? "FAILOVER ACTIVE" : "ONLINE"}
+                </span>
               </div>
             </div>
-          </div>
+          ) : (
+            <div className="space-y-2 pt-2 border-t border-purple-500/20">
+              <span className="text-[10px] font-mono text-purple-300/60 uppercase block">
+                Multi-Tier Routing Chain Topology:
+              </span>
+              <div className="grid grid-cols-2 gap-2 text-xs font-mono">
+                {/* Tier 1 Primary */}
+                <div
+                  className={`p-2.5 rounded-xl border transition-all ${
+                    !isChaos
+                      ? "bg-purple-950/60 border-cosmicFuchsia/80 text-white shadow-[0_0_12px_rgba(217,70,239,0.3)]"
+                      : "bg-[#090514]/60 border-purple-900/30 text-purple-400/40 line-through"
+                  }`}
+                >
+                  <div className="flex items-center justify-between text-[10px] text-purple-300/70 mb-1">
+                    <span>1. Primary Frontier</span>
+                    {!isChaos && (
+                      <span className="w-2 h-2 rounded-full bg-brandGreen shadow-[0_0_6px_#10b981]" />
+                    )}
+                  </div>
+                  <p className="font-bold text-xs truncate">Claude 3.5 Sonnet</p>
+                  <span className="text-[9px] text-purple-400/60">Tier-2 Frontier</span>
+                </div>
+
+                {/* Tier 2 Secondary Failover */}
+                <div
+                  className={`p-2.5 rounded-xl border transition-all ${
+                    isChaos
+                      ? "bg-amber-950/70 border-amber-500/80 text-amber-200 shadow-[0_0_15px_rgba(245,158,11,0.35)]"
+                      : "bg-[#090514]/60 border-purple-900/30 text-purple-400/40"
+                  }`}
+                >
+                  <div className="flex items-center justify-between text-[10px] text-purple-300/70 mb-1">
+                    <span>2. Secondary Failover</span>
+                    {isChaos && (
+                      <span className="w-2 h-2 rounded-full bg-brandAmber shadow-[0_0_6px_#f59e0b] animate-pulse" />
+                    )}
+                  </div>
+                  <p className="font-bold text-xs truncate">OpenAI GPT-4o</p>
+                  <span className="text-[9px] text-amber-300/70">Sub-180ms Auto-Route</span>
+                </div>
+
+                {/* Tier 3 Micro Fast Fallback */}
+                <div className="p-2.5 rounded-xl border bg-[#090514]/60 border-purple-900/30 text-purple-300/70">
+                  <div className="flex items-center justify-between text-[10px] text-purple-400/60 mb-1">
+                    <span>3. High-Speed Fallback</span>
+                  </div>
+                  <p className="font-bold text-xs truncate">Groq Llama-3.3-70B</p>
+                  <span className="text-[9px] text-purple-400/60">Tier-1 Micro (&lt;$0.08)</span>
+                </div>
+
+                {/* Tier 4 Air-Gapped Local */}
+                <div className="p-2.5 rounded-xl border bg-[#090514]/60 border-purple-900/30 text-purple-300/70">
+                  <div className="flex items-center justify-between text-[10px] text-purple-400/60 mb-1">
+                    <span>4. Air-Gapped Enclave</span>
+                  </div>
+                  <p className="font-bold text-xs truncate">Local Ollama Llama-3</p>
+                  <span className="text-[9px] text-purple-400/60">Tier-0 Air-Gap Lock</span>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Resilience Telemetry Footer */}
           <div className="grid grid-cols-3 gap-2 text-center font-mono pt-2 border-t border-purple-500/20 text-xs">
@@ -262,8 +302,51 @@ export function Panel2_ChaosBudget({
               </div>
             </div>
 
-            {/* REAL-TIME SVG FAILOVER LATENCY & CUMULATIVE SAVINGS SPARKLINE */}
-            <div className="bg-[#080312]/90 p-3 rounded-xl border border-purple-500/30 space-y-2 shadow-inner">
+            {/* Simple Mode: Clean Progress Bar & Safeguard Status */}
+            {mode === "simple" && (
+              <div className="space-y-3">
+                <div className="bg-[#080312]/90 p-4 rounded-xl border border-purple-500/30 space-y-3 shadow-inner">
+                  <div className="flex justify-between items-center text-xs font-mono">
+                    <span className="text-purple-300/80 font-semibold">Remaining Session Budget</span>
+                    <span className="text-emerald-400 font-bold text-sm">
+                      ${Math.max(0, telemetry.userLimitUsd - telemetry.cumulativeCostUsd).toFixed(4)} USD Left
+                    </span>
+                  </div>
+
+                  {/* Progress bar */}
+                  <div className="w-full bg-[#170e30] h-4 rounded-full overflow-hidden border border-purple-500/30 p-0.5">
+                    <div
+                      className="bg-gradient-to-r from-emerald-500 via-teal-400 to-fuchsia-500 h-full rounded-full transition-all duration-300"
+                      style={{
+                        width: `${Math.min(100, Math.max(4, ((telemetry.userLimitUsd - telemetry.cumulativeCostUsd) / (telemetry.userLimitUsd || 0.01)) * 100))}%`,
+                      }}
+                    />
+                  </div>
+
+                  <div className="flex justify-between text-[11px] font-mono text-purple-300/70 pt-0.5">
+                    <span>Spent: ${telemetry.cumulativeCostUsd.toFixed(4)} USD</span>
+                    <span>Cap: ${telemetry.userLimitUsd.toFixed(2)} USD</span>
+                  </div>
+                </div>
+
+                <div className="p-3.5 rounded-xl bg-emerald-950/40 border border-emerald-500/40 text-xs font-mono text-emerald-100 flex items-center gap-3">
+                  <CheckCircle2 className="w-4 h-4 text-brandGreen flex-shrink-0" />
+                  <div>
+                    <strong className="text-white font-display text-xs">
+                      BUDGET SAFEGUARD ACTIVE
+                    </strong>
+                    <p className="text-[11px] text-emerald-200/80 mt-0.5 font-sans">
+                      Deterministic pre-flight checks enforce budget ceilings before each model turn.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Developer Mode: Detailed Turn-by-Turn Sparkline */}
+            {mode === "developer" && (
+              <>
+                <div className="bg-[#080312]/90 p-3 rounded-xl border border-purple-500/30 space-y-2 shadow-inner">
               <div className="flex items-center justify-between text-[11px] font-mono">
                 <div className="flex items-center gap-1.5 text-purple-200">
                   <Activity className="w-3.5 h-3.5 text-cosmicFuchsia" />
@@ -425,42 +508,46 @@ export function Panel2_ChaosBudget({
                 </div>
               </div>
             )}
+              </>
+            )}
           </div>
 
-          {/* Pre-Call Ledger Table */}
-          <div className="space-y-1.5 pt-2 border-t border-purple-500/20 text-xs font-mono">
-            <span className="text-[10px] text-purple-300/60 uppercase block">
-              Pre-Call Ledger Breakdown:
-            </span>
-            <div className="bg-[#090514]/80 rounded-xl border border-purple-500/20 p-2.5 space-y-1.5">
-              <div className="flex justify-between items-center text-purple-200">
-                <span>Cumulative Incurred Spend (&sum; C_k):</span>
-                <span className="font-bold">${telemetry.cumulativeCostUsd.toFixed(4)}</span>
-              </div>
-              <div className="flex justify-between items-center text-purple-200">
-                <span>Worst-Case Turn Reservation (&Ccirc;_i):</span>
-                <span className="font-bold text-brandAmber">$0.0240</span>
-              </div>
-              <div className="flex justify-between items-center text-purple-200">
-                <span>Enforcement Decision:</span>
-                <span
-                  className={`font-bold px-2 py-0.5 rounded text-[10px] ${
-                    telemetry.isHalted
-                      ? "bg-rose-950 text-brandRose border border-brandRose"
+          {/* Pre-Call Ledger Table (Developer Mode) */}
+          {mode === "developer" && (
+            <div className="space-y-1.5 pt-2 border-t border-purple-500/20 text-xs font-mono">
+              <span className="text-[10px] text-purple-300/60 uppercase block">
+                Pre-Call Ledger Breakdown:
+              </span>
+              <div className="bg-[#090514]/80 rounded-xl border border-purple-500/20 p-2.5 space-y-1.5">
+                <div className="flex justify-between items-center text-purple-200">
+                  <span>Cumulative Incurred Spend (&sum; C_k):</span>
+                  <span className="font-bold">${telemetry.cumulativeCostUsd.toFixed(4)}</span>
+                </div>
+                <div className="flex justify-between items-center text-purple-200">
+                  <span>Worst-Case Turn Reservation (&Ccirc;_i):</span>
+                  <span className="font-bold text-brandAmber">$0.0240</span>
+                </div>
+                <div className="flex justify-between items-center text-purple-200">
+                  <span>Enforcement Decision:</span>
+                  <span
+                    className={`font-bold px-2 py-0.5 rounded text-[10px] ${
+                      telemetry.isHalted
+                        ? "bg-rose-950 text-brandRose border border-brandRose"
+                        : telemetry.activeTier === "tier-1-micro"
+                        ? "bg-amber-950 text-brandAmber border border-brandAmber"
+                        : "bg-emerald-950 text-brandGreen border border-brandGreen"
+                    }`}
+                  >
+                    {telemetry.isHalted
+                      ? "BLOCK_HALT"
                       : telemetry.activeTier === "tier-1-micro"
-                      ? "bg-amber-950 text-brandAmber border border-brandAmber"
-                      : "bg-emerald-950 text-brandGreen border border-brandGreen"
-                  }`}
-                >
-                  {telemetry.isHalted
-                    ? "BLOCK_HALT"
-                    : telemetry.activeTier === "tier-1-micro"
-                    ? "DOWN_ROUTE_MICRO"
-                    : "PERMIT_FRONTIER"}
-                </span>
+                      ? "DOWN_ROUTE_MICRO"
+                      : "PERMIT_FRONTIER"}
+                  </span>
+                </div>
               </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
     </div>

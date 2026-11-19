@@ -95,9 +95,9 @@ def build_deck(output_path: str):
 
     # 4 Bottom Metric Stat Cards
     metrics = [
-        ("-84.2%", "AST Token Bloat Reduction", ACCENT_FUCHSIA),
+        ("-80.1%", "AST Token Bloat Reduction", ACCENT_FUCHSIA),
         ("< 180 ms", "Bifrost Circuit Breaker Failover", ACCENT_CYAN),
-        ("99.4%", "Tavily Freshness Accuracy", ACCENT_EMERALD),
+        ("100.0%", "Tavily Freshness Accuracy", ACCENT_EMERALD),
         ("0.00%", "Pre-Call Budget Overrun Risk", TEXT_PURPLE),
     ]
     card_w = 205
@@ -241,7 +241,7 @@ def build_deck(output_path: str):
     c.drawString(55, 68, "THE AEGIS-0 RESOLUTION:")
     c.setFont("Helvetica", 9)
     c.setFillColor(TEXT_WHITE)
-    c.drawString(205, 68, "Submodular AST Knapsack Pruning (-84.2%) + Deterministic Pre-Call Ledger + Tavily Live Grounding + Air-Gap Enclaves")
+    c.drawString(205, 68, "Submodular AST Knapsack Pruning (-80.1%) + Deterministic Pre-Call Ledger + Tavily Live Grounding + Air-Gap Enclaves")
     c.showPage()
 
     # =========================================================================
@@ -282,7 +282,7 @@ def build_deck(output_path: str):
         ("3. AST & LEDGER", "KNAPSACK OPTIMIZER", [
             "Submodular AST Pruning",
             "1-Line Type-Safe Stubs",
-            "-84.2% Empirical Tokens",
+            "-80.1% Empirical Tokens",
             "Pre-Call Financial Bound",
             "Worst-case reservation",
             "Clean Hard Halt Machine",
@@ -349,7 +349,7 @@ def build_deck(output_path: str):
     c.drawString(40, 495, "Mathematical Core I: Submodular AST Knapsack Pruning")
     c.setFont("Helvetica", 10)
     c.setFillColor(TEXT_MUTED)
-    c.drawString(40, 477, "Graph-theoretic symbol selection with 1-line type stubs achieving -84.2% token reduction")
+    c.drawString(40, 477, "Graph-theoretic symbol selection with 1-line type stubs achieving -80.1% token reduction")
 
     w_half = 425
     # Left Box
@@ -412,11 +412,10 @@ def build_deck(output_path: str):
     c.drawRightString(895, 375, "Savings")
 
     bench_data = [
-        ("High-Frequency FIX Router", "48,500 tok", "7,660 tok", "-84.2%"),
-        ("Quant Portfolio Optimizer", "32,400 tok", "5,820 tok", "-82.0%"),
-        ("AEGIS-0 Self-Dogfooding (orchestrator)", "18,010 tok", "4,557 tok", "-74.7%"),
+        ("AEGIS-0 Orchestrator Core", "18,071 tok", "4,572 tok", "-74.7%"),
         ("Zero-Trust Security Gate", "5,178 tok", "609 tok", "-88.2%"),
         ("Tavily Freshness Engine", "4,989 tok", "425 tok", "-91.5%"),
+        ("Cross-Module Verified Average", "28,238 tok", "5,606 tok", "-80.1%"),
     ]
     by = 345
     c.setFont("Helvetica", 8.5)
@@ -436,7 +435,7 @@ def build_deck(output_path: str):
     draw_card(c, 510, 85, 395, 80, border_color=ACCENT_EMERALD, bg_color=HexColor("#061713"))
     c.setFont("Helvetica-Bold", 11)
     c.setFillColor(ACCENT_EMERALD)
-    c.drawString(525, 140, "AVERAGE COMPRESSION: -84.2% TOKEN BLOAT REDUCTION")
+    c.drawString(525, 140, "AVERAGE COMPRESSION: -80.1% TOKEN BLOAT REDUCTION")
     c.setFont("Helvetica", 8.5)
     c.setFillColor(TEXT_WHITE)
     c.drawString(525, 118, "Guarantees seed function integrity while enabling 4x longer context horizon.")
@@ -747,7 +746,7 @@ def build_deck(output_path: str):
             "• Acoustic Voice Biometric Gate for destructive actions",
         ], ACCENT_FUCHSIA),
         ("3. Real-World Utility & Impact (20 Pts)", [
-            "• -84.2% Empirical token bloat reduction in dev loops",
+            "• -80.1% Empirical token bloat reduction in dev loops",
             "• 0% Failure rate on contemporary SDK executions",
             "• Zero budget overruns guaranteed via hard-halt machine",
             "• Enterprise-grade IP exfiltration prevention",

@@ -27,7 +27,7 @@ SECURITY_GATE_DIR = os.path.join(REPO_ROOT, "security-gate")
 if SECURITY_GATE_DIR not in sys.path:
     sys.path.insert(0, SECURITY_GATE_DIR)
 
-TAVILY_FRESHNESS_DIR = os.path.join(REPO_ROOT, "tavily-freshness")
+TAVILY_FRESHNESS_DIR = os.path.join(REPO_ROOT, "tavily_freshness")
 if TAVILY_FRESHNESS_DIR not in sys.path:
     sys.path.insert(0, TAVILY_FRESHNESS_DIR)
 

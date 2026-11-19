@@ -117,7 +117,7 @@ function Fresh() {
         })}
       </div>
       <pre>{fixed ? "client = OpenAI()\nres = client.chat.completions.create(model=\"gpt-4o\", ...)" : "import openai\nres = openai.ChatCompletion.create(model=\"gpt-4\", ...)"}</pre>
-      <button className="btn dark" onClick={() => setFixed(!fixed)}>{fixed ? "Undo" : "Apply Tavily fresh patch"}</button>
+      <button className="btn dark" onClick={() => setFixed(!fixed)}>{fixed ? "Reset to Stale Example" : "Apply Tavily Fresh Patch"}</button>
       <p className="note dark">Example scores for illustration. Live scoring needs a Tavily key.</p>
     </div>
   );

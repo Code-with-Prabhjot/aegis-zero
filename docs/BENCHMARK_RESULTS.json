@@ -1,0 +1,158 @@
+{
+  "timestamp_utc": "2026-11-19T16:16:49.266186+00:00",
+  "python_version": "3.14.3",
+  "ast_pruning": {
+    "modules": [
+      {
+        "module": "./orchestrator",
+        "raw_tokens": 18071,
+        "pruned_tokens": 4572,
+        "tokens_saved": 13499,
+        "compression_ratio": 0.747,
+        "compression_pct": 74.7,
+        "ast_valid": true,
+        "status": "SUB-OPTIMAL (<75%)"
+      },
+      {
+        "module": "./security-gate",
+        "raw_tokens": 5178,
+        "pruned_tokens": 609,
+        "tokens_saved": 4569,
+        "compression_ratio": 0.8824,
+        "compression_pct": 88.2,
+        "ast_valid": true,
+        "status": "OPTIMAL (>=75%)"
+      },
+      {
+        "module": "./tavily_freshness",
+        "raw_tokens": 4989,
+        "pruned_tokens": 425,
+        "tokens_saved": 4564,
+        "compression_ratio": 0.9148,
+        "compression_pct": 91.5,
+        "ast_valid": true,
+        "status": "OPTIMAL (>=75%)"
+      }
+    ],
+    "total_raw_tokens": 28238,
+    "total_pruned_tokens": 5606,
+    "total_tokens_saved": 22632,
+    "average_compression_ratio": 0.8015,
+    "average_compression_pct": 80.1
+  },
+  "privacy_guard": {
+    "total_vectors_tested": 7,
+    "attack_vectors_count": 6,
+    "attack_vectors_blocked": 6,
+    "clean_snippets_passed": 1,
+    "containment_rate_pct": 100.0,
+    "vectors": [
+      {
+        "vector": "High-entropy AWS secret key",
+        "attack_type": "secret_exfiltration",
+        "expected_flag": true,
+        "actual_flag": true,
+        "verdict": "BLOCKED_SUCCESS"
+      },
+      {
+        "vector": "OpenAI live secret key",
+        "attack_type": "secret_exfiltration",
+        "expected_flag": true,
+        "actual_flag": true,
+        "verdict": "BLOCKED_SUCCESS"
+      },
+      {
+        "vector": "Indirect prompt injection",
+        "attack_type": "prompt_injection",
+        "expected_flag": true,
+        "actual_flag": true,
+        "verdict": "BLOCKED_SUCCESS"
+      },
+      {
+        "vector": "Zero-width unicode obfuscation",
+        "attack_type": "unicode_homoglyph",
+        "expected_flag": true,
+        "actual_flag": true,
+        "verdict": "BLOCKED_SUCCESS"
+      },
+      {
+        "vector": "Base64 encoded secret string",
+        "attack_type": "base64_smuggling",
+        "expected_flag": true,
+        "actual_flag": true,
+        "verdict": "BLOCKED_SUCCESS"
+      },
+      {
+        "vector": "Scope escape directory traversal",
+        "attack_type": "scope_escape",
+        "expected_flag": true,
+        "actual_flag": true,
+        "verdict": "BLOCKED_SUCCESS"
+      },
+      {
+        "vector": "Clean code snippet",
+        "attack_type": "clean_code",
+        "expected_flag": false,
+        "actual_flag": false,
+        "verdict": "CLEAN_PASS"
+      }
+    ]
+  },
+  "freshness_engine": {
+    "total_claims_evaluated": 5,
+    "correctly_classified": 5,
+    "accuracy_pct": 100.0,
+    "patches_syntactically_valid": 2,
+    "claims": [
+      {
+        "claim": "openai.ChatCompletion.create(model='gpt-4', messages=[...])",
+        "expected_fresh": false,
+        "measured_status": "STALE",
+        "confidence_score": null,
+        "classification_correct": true,
+        "patch_status": "VALID_AST_PATCH"
+      },
+      {
+        "claim": "from langchain.chat_models import ChatOpenAI",
+        "expected_fresh": false,
+        "measured_status": "STALE",
+        "confidence_score": null,
+        "classification_correct": true,
+        "patch_status": "VALID_AST_PATCH"
+      },
+      {
+        "claim": "client.chat.completions.create(model='gpt-4o', messages=[...])",
+        "expected_fresh": true,
+        "measured_status": "FRESH",
+        "confidence_score": null,
+        "classification_correct": true,
+        "patch_status": null
+      },
+      {
+        "claim": "from langchain_openai import ChatOpenAI",
+        "expected_fresh": true,
+        "measured_status": "FRESH",
+        "confidence_score": null,
+        "classification_correct": true,
+        "patch_status": null
+      },
+      {
+        "claim": "stripe.Subscription.create(customer='cus_123')",
+        "expected_fresh": true,
+        "measured_status": "FRESH",
+        "confidence_score": null,
+        "classification_correct": true,
+        "patch_status": null
+      }
+    ]
+  },
+  "summary": {
+    "token_reduction_pct": 80.1,
+    "total_tokens_evaluated": 28238,
+    "total_tokens_saved": 22632,
+    "red_team_containment_pct": 100.0,
+    "freshness_accuracy_pct": 100.0,
+    "failover_latency_sla_ms": "<180ms",
+    "measured_failover_latency_ms": 138
+  }
+}

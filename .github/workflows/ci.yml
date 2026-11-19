@@ -1,0 +1,61 @@
+name: AEGIS-0 Continuous Integration
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  backend-verification:
+    name: Backend Pytest & Verification Benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install Backend Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r orchestrator/requirements.txt
+
+      - name: Run Pytest Verification Suite
+        run: |
+          python -m pytest tests/ -v
+
+      - name: Run Mathematical AST Pruning Benchmark
+        run: |
+          python aegis_cli.py --benchmark
+
+      - name: Verify Reproducible Benchmark Suite
+        run: |
+          python scripts/run_benchmarks.py
+
+  frontend-verification:
+    name: Mission Control Next.js Build & Typecheck
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mission-control
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: mission-control/package-lock.json
+
+      - name: Install Frontend Dependencies
+        run: npm ci
+
+      - name: Typecheck & Build Next.js Workbench
+        run: npm run build

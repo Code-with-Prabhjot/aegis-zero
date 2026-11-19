@@ -303,7 +303,7 @@ async def verify_session_handshake(auth_token: str, session_id: str) -> bool:
     is_valid_hmac = verify_hmac_signature(
         sig=auth_token,
         payload=session_id.encode("utf-8"),
-        secret="REDACTED_HISTORICAL_HMAC_FALLBACK"
+        secret=os.environ["AEGIS_HMAC_SECRET"]
     )
     return is_valid_hmac`,
   original_payload: `import hmac
@@ -323,12 +323,34 @@ def verify_session_handshake(auth_token, session_id):
   passphrase: "Approve Alpha-7",
 };
 
+const getApiBaseUrl = (): string => {
+  if (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_API_BASE_URL) {
+    return process.env.NEXT_PUBLIC_API_BASE_URL;
+  }
+  return "";
+};
+
+const getWsBaseUrl = (): string => {
+  if (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_WS_BASE_URL) {
+    return process.env.NEXT_PUBLIC_WS_BASE_URL;
+  }
+  if (typeof window !== "undefined") {
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const host = window.location.host;
+    if (host.includes(":3000")) {
+      return `${protocol}//${window.location.hostname}:8000`;
+    }
+    return `${protocol}//${host}`;
+  }
+  return "ws://127.0.0.1:8000";
+};
+
 export function useOrchestrator() {
   const [telemetry, setTelemetry] = useState<TelemetryState>({
     gatewayStatus: "ONLINE",
     activeModel: "claude-3-5-sonnet-20241022",
     activeTier: "tier-2-frontier",
-    tokenSavingsPct: 84.2,
+    tokenSavingsPct: 80.1,
     cumulativeCostUsd: 0.0418,
     userLimitUsd: 0.50,
     remainingBudgetUsd: 0.4582,
@@ -339,8 +361,8 @@ export function useOrchestrator() {
     claims: INITIAL_CLAIMS,
     quarantinedAction: INITIAL_ACTION,
     nodes: INITIAL_NODES,
-    rawTotalTokens: 48500,
-    prunedTotalTokens: 7660,
+    rawTotalTokens: 28238,
+    prunedTotalTokens: 5606,
   });
 
   const [isConnected, setIsConnected] = useState(false);
@@ -353,7 +375,7 @@ export function useOrchestrator() {
 
     const connectWs = () => {
       try {
-        const ws = new WebSocket("ws://localhost:8000/ws/telemetry");
+        const ws = new WebSocket(`${getWsBaseUrl()}/ws/telemetry`);
         wsRef.current = ws;
 
         ws.onopen = () => {
@@ -430,7 +452,7 @@ export function useOrchestrator() {
   // 1-Click Chaos Trigger
   const triggerChaosOutage = useCallback(async () => {
     try {
-      await fetch("http://localhost:8000/api/chaos/inject", {
+      await fetch(`${getApiBaseUrl()}/api/chaos/inject`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status_code: 429 }),
@@ -452,7 +474,7 @@ export function useOrchestrator() {
   // Reset Chaos
   const resetChaos = useCallback(async () => {
     try {
-      await fetch("http://localhost:8000/api/chaos/reset", {
+      await fetch(`${getApiBaseUrl()}/api/chaos/reset`, {
         method: "POST",
       });
     } catch {
@@ -462,11 +484,11 @@ export function useOrchestrator() {
     setTelemetry((prev) => ({
       ...prev,
       gatewayStatus: "ONLINE",
-      activeModel: "claude-3-5-sonnet-20241022",
+      activeModel: "claude-sonnet-4-20250514",
       activeTier: "tier-2-frontier",
       circuitBreakerTripped: false,
     }));
-    setFailoverToast("CIRCUIT-BREAKER RESET: Primary Provider (Claude 3.5 Sonnet) Restored to Active Routing");
+    setFailoverToast("CIRCUIT-BREAKER RESET: Primary Provider Restored to Active Routing");
   }, []);
 
   // Budget slider update
@@ -505,7 +527,7 @@ export function useOrchestrator() {
   // Approve quarantined action
   const approveAction = useCallback(async (actionId: string, hmacToken: string) => {
     try {
-      await fetch("http://localhost:8000/api/action/approve", {
+      await fetch(`${getApiBaseUrl()}/api/action/approve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -575,16 +597,16 @@ export function useOrchestrator() {
       activeModel: "claude-3-5-sonnet-20241022",
       activeTier: "tier-2-frontier",
       airGapLock: false,
-      tokenSavingsPct: 84.2,
-      rawTotalTokens: 48500,
-      prunedTotalTokens: 7660,
+      tokenSavingsPct: 80.1,
+      rawTotalTokens: 28238,
+      prunedTotalTokens: 5606,
       nodes: INITIAL_NODES,
       claims: INITIAL_CLAIMS,
       quarantinedAction: INITIAL_ACTION,
       circuitBreakerTripped: false,
       isHalted: false,
     }));
-    setFailoverToast("DEMO LOADED: Submodular AST Pruning active (~48.5k -> 7.6k tokens). Zero-trust verification ready.");
+    setFailoverToast("DEMO LOADED: Submodular AST Pruning active (~28.2k -> 5.6k tokens). Zero-trust verification ready.");
   }, []);
 
   // Quick Demo Scenario: Inject Confidential Repo Taint
@@ -615,7 +637,7 @@ export function useOrchestrator() {
     ) => {
       setIsExecuting(true);
       try {
-        const response = await fetch("http://localhost:8000/api/orchestrate", {
+        const response = await fetch(`${getApiBaseUrl()}/api/orchestrate`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -750,7 +772,7 @@ export function useOrchestrator() {
     ) => {
       setIsExecuting(true);
       try {
-        const response = await fetch("http://localhost:8000/api/security/redteam", {
+        const response = await fetch(`${getApiBaseUrl()}/api/security/redteam`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -789,7 +811,7 @@ export function useOrchestrator() {
   // 1-Click Compliance Bundle Export
   const exportAuditBundle = useCallback(async () => {
     try {
-      const res = await fetch("http://localhost:8000/api/audit/export");
+      const res = await fetch(`${getApiBaseUrl()}/api/audit/export`);
       const data = await res.json();
       const blob = new Blob([JSON.stringify(data, null, 2)], {
         type: "application/json",
@@ -841,7 +863,7 @@ export function useOrchestrator() {
   // Atomic Rollback Last Diff
   const rollbackLastDiff = useCallback(async () => {
     try {
-      const res = await fetch("http://localhost:8000/api/action/rollback", {
+      const res = await fetch(`${getApiBaseUrl()}/api/action/rollback`, {
         method: "POST",
       });
       const data = await res.json();

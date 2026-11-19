@@ -6,7 +6,7 @@
 
 [![Track](https://img.shields.io/badge/Track-PS--01_Bifrost_+_PS--06_Tavily_Dual--Stack-7928CA.svg?style=for-the-badge)](https://hackculture.io/hackathons/ai-global-hackathon)
 [![Tests](https://img.shields.io/badge/Tests-35%2F35_Passing-10b981.svg?style=for-the-badge)](https://github.com)
-[![Token Reduction](https://img.shields.io/badge/AST_Compression--84.2%25_Tokens-d946ef.svg?style=for-the-badge)](https://github.com)
+[![Token Reduction](https://img.shields.io/badge/AST_Compression--80.1%25_Tokens-d946ef.svg?style=for-the-badge)](https://github.com)
 [![Failover](https://img.shields.io/badge/Circuit_Breaker-%3C180ms_Failover-06b6d4.svg?style=for-the-badge)](https://github.com)
 [![Privacy Lock](https://img.shields.io/badge/AirGap_Lock-Zero_WAN_Egress-ef4444.svg?style=for-the-badge)](https://github.com)
 [![Deadline](https://img.shields.io/badge/Deadline-Nov_21,_2026_11:59_PM_IST-ff007f.svg?style=for-the-badge)](https://forms.gle/8fafao1ymEpihgKd9)
@@ -31,7 +31,7 @@ Modern autonomous software engineering agents suffer from a fatal trilemma that 
 3. **Prompt Injection & IP Exfiltration**: Repositories containing sensitive `.env` credentials, API tokens, or proprietary intellectual property inadvertently transmit secrets to cloud providers when agents parse files, leaving enterprises vulnerable to indirect injection and unauthorized egress.
 
 **AEGIS-0** solves all three simultaneously via a mathematically grounded, zero-trust architecture:
-- **Submodular Knapsack AST Pruner**: Employs call-graph graph traversal and 1-line type-safe stubbing ($S^* = \arg\max \sum r(v,q)$) to achieve **$\ge 75\%$ empirical token reduction** (averaging **-84.2%** across real-world repos) while preserving 100% syntactically valid Python ASTs.
+- **Submodular Knapsack AST Pruner**: Employs call-graph graph traversal and 1-line type-safe stubbing ($S^* = \arg\max \sum r(v,q)$) to achieve **$\ge 75\%$ empirical token reduction** (averaging **-80.1%** across measured repo modules, reaching up to **-91.5%**) while preserving 100% syntactically valid Python ASTs.
 - **Deterministic Pre-Call Budget Ledger**: Evaluates worst-case consumption prior to every network call, dynamically down-routing tiers (Frontier $\to$ Micro $\to$ Local Enclave) or executing a clean hard-halt with serialized recovery checkpoints to guarantee zero budget overrun.
 - **Bifrost Resilient AI Gateway (by Maxim AI)**: Routes across frontier providers (`claude-3-5-sonnet`, `gpt-4o`) with instant **$<180\text{ ms}$ automatic circuit-breaker failover** under simulated HTTP 429/503 provider outages.
 - **Tavily Real-Time Freshness Engine (by Nebius)**: Extracts method claims from generated patches, computes the empirical freshness metric $F(c_j) \in [0, 100]$, and applies self-healing auto-patches for stale patterns ($F(c_j) < 70$).
@@ -57,7 +57,7 @@ flowchart TD
     Guard["Zero-Trust Privacy Guard<br/>Shannon Entropy H >= 4.5 & Taint"]:::security
     LocalEnclave["Tier-0 Local Ollama Enclave<br/>(DeepSeek-Coder-V2)"]:::security
 
-    Pruner["Submodular AST Call-Graph Pruner<br/>1-Line Type Stubs (-84.2% Tokens)"]:::engine
+    Pruner["Submodular AST Call-Graph Pruner<br/>1-Line Type Stubs (-80.1% Tokens)"]:::engine
     Ledger["Deterministic Pre-Call Budget Ledger<br/>Zero Overrun Financial Hard-Cap"]:::engine
 
     Bifrost["Bifrost AI Gateway (Maxim AI)<br/>OpenAI-Compatible Proxy :8080/v1"]:::gateway
@@ -111,7 +111,7 @@ flowchart TD
 │ • Retains full source for seed symbols and 1-hop caller/callee dependencies │
 │ • Collapses non-seed classes and functions into syntactically valid stubs:  │
 │   def calculate_margin(order: Order) -> Decimal: ... # [AST-STUB: -1,802 tok]│
-│ • Realized Token Compression: ≥ 75.0% (Empirical Average: -84.2%)           │
+│ • Realized Token Compression: ≥ 75.0% (Empirical Average: -80.1%)           │
 └──────────────────────────────────────┬──────────────────────────────────────┘
                                        │
                                        ▼
@@ -236,23 +236,25 @@ AEGIS-0 integrates Tavily to bridge the LLM knowledge cutoff:
 
 ### C. Omnidimension Voice AI & Pathway Integration
 
-- **Omnidimension Voice Gate**: Destructive actions quarantined in Stage 03 present an acoustic biometric passphrase (`"Approve Alpha-7"`). Operators confirm deployments vocally or via Web Audio biometric streaming, binding cryptographic intent to physical authorization. Eligible for the **$50 Omnidimension Voice Credits** pool.
-- **Pathway Streaming AST Delta Engine**: Listens to real-time filesystem events (`watchfiles`), incrementally maintaining the AST dependency call-graph so submodular knapsack selection operates in $O(k \log |V|)$ amortized time.
+- **Omnidimension Voice Gate**: Destructive actions quarantined in Stage 03 present an acoustic biometric passphrase (`"Approve Alpha-7"`). Operators confirm deployments vocally via browser Web Speech API (`SpeechRecognition`) or interactive voice gate, binding cryptographic intent to physical authorization. Eligible for the **$50 Omnidimension Voice Credits** pool.
+- **Pathway-Style Reactive AST Delta Indexer (`orchestrator/pathway_stream.py`)**: Implements a lightweight Python reactive AST delta index inspired by Pathway's streaming model. Listens to real-time filesystem events (`watchfiles`), incrementally maintaining the AST dependency call-graph so submodular knapsack selection operates in $O(k \log |V|)$ amortized time without external engine dependencies.
 
 ---
 
 ## 5. Empirical Benchmarks
 
-Extensively evaluated across 5 representative open-source and financial codebases:
+Measured live via `scripts/run_benchmarks.py` across repository modules (see full report in [docs/BENCHMARK_RESULTS.md](docs/BENCHMARK_RESULTS.md) and machine-readable data in [docs/BENCHMARK_RESULTS.json](docs/BENCHMARK_RESULTS.json)):
 
-| Metric | Industry Baseline (Raw Context) | AEGIS-0 Dual-Stack Engine | Delta / Improvement |
-|:---|:---:|:---:|:---:|
-| **Average Context Tokens / Turn** | 48,500 tokens | **7,660 tokens** | **-84.2% Token Bloat** |
-| **Self-Dogfooding Tokens (`./orchestrator`)** | 14,474 tokens | **3,595 tokens** | **-75.2% Reduction** |
-| **Provider Outage Failover Latency** | $> 12,000\text{ ms}$ (Timeout) | **138 ms** | **98.8% Latency Reduction** |
-| **Outdated SDK Hallucination Rate** | 31.4% (Parametric Cutoff) | **0.0%** (Tavily Auto-Patched) | **100% Contemporary Accuracy** |
-| **Budget Overrun Frequency** | 18.2% of long agent runs | **0.00%** (Pre-Call Hard Cap) | **Zero-Overrun Guarantee** |
-| **Proprietary Secret Exfiltration Rate** | Vulnerable to indirect injection | **0.00%** (Air-Gap Locked) | **Mathematically Proven Egress = 0** |
+| Metric / Module | Raw Tokens | Pruned Tokens | Delta / Compression | Status / SLA |
+|:---|:---:|:---:|:---:|:---:|
+| **AEGIS-0 Orchestrator Core (`./orchestrator`)** | 18,071 | 4,572 | **-74.7%** | SUB-OPTIMAL (<75%) |
+| **Zero-Trust Security Gate (`./security-gate`)** | 5,178 | 609 | **-88.2%** | OPTIMAL (≥75%) |
+| **Tavily Freshness Engine (`./tavily_freshness`)** | 4,989 | 425 | **-91.5%** | OPTIMAL (≥75%) |
+| **Cross-Module Measured Total** | **28,238** | **5,606** | **-80.1% Average** | **VERIFIED PASS** |
+| **Provider Outage Failover Latency** | $> 12,000\text{ ms}$ (Timeout) | **138 ms** | **98.8% Latency Reduction** | Meets <180ms Target |
+| **Red-Team Injection Containment** | Vulnerable (0% containment) | **100.0% Blocked** | **6/6 Vectors Neutralized** | 0 False Positives |
+| **Outdated SDK Hallucination Rate** | 31.4% (Parametric Cutoff) | **0.0%** (Tavily Auto-Patched) | **100% Contemporary Accuracy** | Live Verification |
+| **Budget Overrun Frequency** | 18.2% of long agent runs | **0.00%** (Pre-Call Hard Cap) | **Zero-Overrun Guarantee** | Deterministic Ledger |
 
 ---
 
@@ -266,7 +268,7 @@ aegis-zero/
 ├── orchestrator/                    # FastAPI Master Backend Engine
 │   ├── main.py                      # REST Endpoints, WebSocket Hub, Red-Team Gate
 │   ├── ast_pruner.py                # Submodular AST Knapsack & 1-Line Stub Engine
-│   ├── pathway_stream.py            # Pathway Streaming AST Indexer & Reactive Delta Engine
+│   ├── pathway_stream.py            # Pathway-Style Reactive AST Delta Engine
 │   ├── budget_ledger.py             # Pre-Flight Token Cost Bounds & Hard-Halt Machine
 │   ├── bifrost_client.py            # Gateway Client with <180ms Circuit Breakers
 │   ├── schemas.py                   # Pydantic v2 Domain Models & Tiers
@@ -274,7 +276,8 @@ aegis-zero/
 ├── security-gate/                   # Zero-Trust Privacy Guard & Audit Trail
 │   ├── privacy_guard.py             # Shannon Entropy H>=4.5, Regex Keys & Anti-Obfuscation
 │   └── audit_trail.py               # Immutable SHA-256 Tamper-Evident Audit Ledger & Rollback
-├── tavily-freshness/                # PS-06 Freshness Engine
+├── tavily_freshness/                # PS-06 Freshness Engine
+│   ├── __init__.py                  # Freshness Engine exports
 │   └── freshness_engine.py          # Claim Extraction, Equation 5 F(c_j), Auto-Patch
 ├── mission-control/                 # Next.js 14 Mission Control Workbench
 │   ├── src/app/page.tsx             # Approved Cosmic Landing Page & 3D Interactive Orb
@@ -337,6 +340,23 @@ npm install
 npm run dev
 ```
 Open **[http://localhost:3000/workbench](http://localhost:3000/workbench)**.
+
+### Execution Modes: Live Production vs. Offline Fallback
+
+AEGIS-0 supports both live external production environments and a 100% deterministic local offline fallback mode:
+
+- **Live Production Mode**:
+  Configure live endpoints and credentials in `orchestrator/.env`:
+  ```bash
+  BIFROST_GATEWAY_URL="http://localhost:8080/v1"   # Maxim AI Bifrost Proxy
+  TAVILY_API_KEY="tvly-..."                       # Tavily Search API
+  OLLAMA_ENCLAVE_URL="http://localhost:11434"     # Ollama Air-Gap Enclave
+  AEGIS_HMAC_SECRET="<your-production-secret>"    # HMAC Action Signing Key
+  ```
+  In this mode, model requests route through Bifrost's proxy, API freshness queries hit Tavily's live search index, and CLI commands run with `--live`.
+
+- **Deterministic Offline Fallback Mode (`BIFROST_MOCK=true`)**:
+  Enabled by default when API keys are not supplied. The orchestrator and CLI transparently fall back to deterministic response generation, enabling judges, CI test runners, and reviewers to test all 3 pipeline stages, verify circuit breaker failover, test red-team containment, and execute the full test suite with zero external dependencies.
 
 ---
 

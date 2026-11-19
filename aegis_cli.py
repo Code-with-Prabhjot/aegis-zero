@@ -25,7 +25,7 @@ SECURITY_GATE_DIR = os.path.join(REPO_ROOT, "security-gate")
 if SECURITY_GATE_DIR not in sys.path:
     sys.path.insert(0, SECURITY_GATE_DIR)
 
-TAVILY_DIR = os.path.join(REPO_ROOT, "tavily-freshness")
+TAVILY_DIR = os.path.join(REPO_ROOT, "tavily_freshness")
 if TAVILY_DIR not in sys.path:
     sys.path.insert(0, TAVILY_DIR)
 
@@ -41,9 +41,14 @@ from orchestrator.bifrost_client import BifrostClient
 from orchestrator.pathway_stream import StreamingASTIndex
 from privacy_guard import PrivacyGuard
 from freshness_engine import FreshnessEngine
+import secrets
 from audit_trail import TamperEvidentAuditLedger
 
-AEGIS_SECRET_KEY = os.getenv("AEGIS_SECRET_KEY", "REDACTED_HISTORICAL_HMAC_FALLBACK")
+AEGIS_SECRET_KEY = (
+    os.getenv("AEGIS_HMAC_SECRET")
+    or os.getenv("AEGIS_SECRET_KEY")
+    or secrets.token_hex(32)
+)
 
 console = Console()
 
@@ -65,6 +70,7 @@ async def run_cli(
     auto_approve: bool = False,
     proposed_action: str = "write_file",
     proposed_target: Optional[str] = None,
+    live_mode: bool = False,
 ) -> int:
     print_banner()
 
@@ -76,7 +82,9 @@ async def run_cli(
         default_user_budget_usd=budget_limit_usd,
         default_session_budget_usd=budget_limit_usd,
     )
-    bifrost = BifrostClient(mock_mode=True)
+    bifrost = BifrostClient(mock_mode=not live_mode)
+    if not live_mode:
+        console.print("[dim yellow][MOCK] Bifrost running in deterministic offline fallback mode. Pass --live for live gateway calls.[/dim yellow]")
     freshness = FreshnessEngine()
 
     session_id = f"cli_{uuid.uuid4().hex[:8]}"
@@ -328,7 +336,7 @@ def run_benchmark() -> int:
     bench_targets = [
         ("./orchestrator", "Refactor preflight budget ledger bounds and circuit breaker"),
         ("./security-gate", "Audit Shannon entropy regex and anti-obfuscation token scanner"),
-        ("./tavily-freshness", "Audit verify_claim_freshness and auto_patch_code in tavily-freshness"),
+        ("./tavily_freshness", "Audit verify_claim_freshness and auto_patch_code in tavily_freshness"),
     ]
 
     t_bench = Table(title="AEGIS-0 Mathematical Context Optimization Benchmarks (PS-01)", border_style="cyan")
@@ -352,8 +360,9 @@ def run_benchmark() -> int:
             continue
         raw_t = sum(n.token_cost for n in nodes)
         node_names = {n.name for n in nodes if n.node_type != "import"}
-        words = set(re.findall(r"[A-Za-z0-9_]+", sample_query))
-        seeds = [w for w in words if w in node_names] or (list(node_names)[:1] if node_names else [])
+        words = sorted(list(set(re.findall(r"[A-Za-z0-9_]+", sample_query))))
+        matching_seeds = [w for w in words if w in node_names]
+        seeds = matching_seeds or sorted(list(node_names))[:1]
         budget = min(8000, max(1200, int(raw_t * 0.25)))
         hybrid_code, stats = pruner.prune_context(
             nodes=nodes,
@@ -381,7 +390,7 @@ def run_benchmark() -> int:
             f"-{saved_t:,} tok",
             f"-{comp * 100:.1f}%",
             "[green]PASS[/green]" if is_valid_syntax else "[red]FAIL[/red]",
-            "[bold green]OPTIMAL (>=75%)[/bold green]" if comp >= 0.70 else "[yellow]SUB-OPTIMAL[/yellow]",
+            "[bold green]OPTIMAL (>=75%)[/bold green]" if comp >= 0.75 else "[yellow]SUB-OPTIMAL (<75%)[/yellow]",
         )
 
     avg_comp = (total_raw - total_pruned) / total_raw if total_raw > 0 else 0.0
@@ -548,6 +557,11 @@ def main():
         help="Rollback the last staged/approved action in the audit ledger",
     )
     parser.add_argument(
+        "--live",
+        action="store_true",
+        help="Execute live model calls via Bifrost gateway instead of deterministic mock mode",
+    )
+    parser.add_argument(
         "--verify-integrity",
         action="store_true",
         help="Verify cryptographic SHA-256 hash chain continuity from genesis",
@@ -574,6 +588,7 @@ def main():
             auto_approve=args.yes,
             proposed_action=args.action,
             proposed_target=args.target,
+            live_mode=args.live,
         )
     )
     sys.exit(code)

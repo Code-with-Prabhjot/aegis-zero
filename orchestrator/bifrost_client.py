@@ -330,6 +330,7 @@ class BifrostClient:
 
         except (httpx.ConnectError, httpx.TimeoutException, httpx.NetworkError):
             # Fallback to local mock engine when Bifrost gateway container is not active
+            logger.warning("[MOCK] Bifrost gateway unreachable at %s. Falling back to deterministic mock response for model '%s'.", self.bifrost_url, model_name)
             mock_content = await self._mock_model_generate(model_name, tier, messages)
             full_prompt_text = " ".join(m.get("content", "") for m in messages)
             p_tokens = self.count_tokens(full_prompt_text)
@@ -440,6 +441,7 @@ class BifrostClient:
                 continue
 
         # If all candidates exhausted, emergency fallback to local deterministic mock
+        logger.warning("[MOCK] All model candidates exhausted or gateway unavailable. Engaging deterministic emergency mock response.")
         emergency_tier = ModelTier.TIER_0_LOCAL
         emergency_model = "deepseek-coder-v2"
         mock_content = await self._mock_model_generate(emergency_model, emergency_tier, messages)

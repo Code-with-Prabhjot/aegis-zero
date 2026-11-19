@@ -43,7 +43,7 @@
 .btn span{transition:transform .25s}.btn:hover{transform:translateY(-3px)}.btn:hover span{transform:translateX(5px)}
 .btn.sm{padding:.6rem 1.2rem;font-size:.82rem}.btn.big{padding:1.2rem 2.4rem;font-size:1.05rem}
 .btn.ghost{background:transparent;box-shadow:0 0 0 1px var(--line) inset;color:#fff}.btn.ghost::after{display:none}.btn.ghost:hover{background:rgba(139,61,255,.18)}
-.btn.dark{background:#1b0b3a;box-shadow:none;margin-top:1.2rem}.cta{display:flex;gap:1rem;flex-wrap:wrap}
+.btn.dark{background:#1b0b3a;color:#ffffff!important;border:1px solid rgba(194,77,255,.45);box-shadow:0 4px 14px rgba(27,11,58,.5);margin-top:1.2rem;cursor:pointer;transition:all .25s ease}.btn.dark:hover{background:#2a1158;color:#ffffff!important;border-color:rgba(194,77,255,.8);box-shadow:0 6px 20px rgba(194,77,255,.35)}.cta{display:flex;gap:1rem;flex-wrap:wrap}
 /* cards */
 .glass{border-radius:22px;background:linear-gradient(160deg,rgba(40,16,86,.7),rgba(12,5,30,.78));box-shadow:0 0 0 1px var(--line),0 40px 80px -40px rgba(139,61,255,.7)}
 .trio{display:grid;grid-template-columns:repeat(3,1fr);gap:1.2rem;margin-top:2.6rem}

@@ -16,11 +16,13 @@ import {
 interface Panel3Props {
   claims: FreshnessClaim[];
   onApplyFreshPatch: (claimId: string) => void;
+  mode?: "simple" | "developer";
 }
 
 export function Panel3_TavilyScorecard({
   claims,
   onApplyFreshPatch,
+  mode = "simple",
 }: Panel3Props) {
   const staleCount = claims.filter((c) => c.is_stale).length;
 
@@ -53,16 +55,25 @@ export function Panel3_TavilyScorecard({
 
       {/* Main Container */}
       <div className="p-3.5 space-y-3 flex-1 min-h-0 overflow-y-auto bg-[#070412]/80">
-        {/* Mathematical Header Note */}
-        <div className="p-2.5 rounded-xl bg-[#120a26]/80 border border-purple-500/20 flex flex-wrap items-center justify-between text-[11px] font-mono text-purple-300/80 gap-2">
-          <span>
-            Empirical Formula:{" "}
-            <strong className="text-cosmicFuchsia">
-              F(c_j) = 100 × [w₁·e^(-μΔt) + w₂·A_sem - w₃·I_dep]
-            </strong>
-          </span>
-          <span className="text-purple-400/60 font-semibold">Threshold F &lt; 70 = STALE</span>
-        </div>
+        {/* Formula Banner (Developer Mode) or Clean Status Header (Simple Mode) */}
+        {mode === "developer" ? (
+          <div className="p-2.5 rounded-xl bg-[#120a26]/80 border border-purple-500/20 flex flex-wrap items-center justify-between text-[11px] font-mono text-purple-300/80 gap-2">
+            <span>
+              Empirical Formula:{" "}
+              <strong className="text-cosmicFuchsia">
+                F(c_j) = 100 × [w₁·e^(-μΔt) + w₂·A_sem - w₃·I_dep]
+              </strong>
+            </span>
+            <span className="text-purple-400/60 font-semibold">Threshold F &lt; 70 = STALE</span>
+          </div>
+        ) : (
+          <div className="p-2.5 rounded-xl bg-[#120a26]/70 border border-purple-500/20 flex items-center justify-between text-xs font-mono text-purple-200">
+            <span>Real-Time Web API Verification:</span>
+            <span className="text-emerald-400 font-bold">
+              {staleCount === 0 ? "All Code Claims Fresh" : `${staleCount} Outdated API Flagged`}
+            </span>
+          </div>
+        )}
 
         {/* Claims Cards List */}
         <div className="space-y-2.5">

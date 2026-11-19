@@ -35,3 +35,5 @@ aegis-secrets.json
 .DS_Store
 Thumbs.db
 *.zip
+*.tsbuildinfo
+mission-control/tsconfig.tsbuildinfo

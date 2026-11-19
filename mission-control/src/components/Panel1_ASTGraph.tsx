@@ -9,6 +9,7 @@ interface Panel1Props {
   rawTotalTokens: number;
   prunedTotalTokens: number;
   tokenSavingsPct: number;
+  mode?: "simple" | "developer";
 }
 
 export function Panel1_ASTGraph({
@@ -16,6 +17,7 @@ export function Panel1_ASTGraph({
   rawTotalTokens,
   prunedTotalTokens,
   tokenSavingsPct,
+  mode = "simple",
 }: Panel1Props) {
   const [selectedNodeId, setSelectedNodeId] = useState<string>("n_auth");
   const [viewMode, setViewMode] = useState<"all" | "selected" | "pruned">("all");
@@ -210,6 +212,9 @@ export function Panel1_ASTGraph({
                   <feGaussianBlur stdDeviation="6" result="blur" />
                   <feComposite in="SourceGraphic" in2="blur" operator="over" />
                 </filter>
+                <filter id="glow-hover" x="-30%" y="-30%" width="160%" height="160%">
+                  <feDropShadow dx="0" dy="0" stdDeviation="4" floodColor="#d946ef" floodOpacity="0.5" />
+                </filter>
 
                 {/* Animated Edge Pulse Dash-Offset */}
                 <style>{`
@@ -278,7 +283,7 @@ export function Panel1_ASTGraph({
                     <g
                       key={node.id}
                       transform={`translate(${node.x}, ${node.y})`}
-                      className="cursor-pointer transition-transform duration-150 hover:scale-105"
+                      className="cursor-pointer group select-none"
                       onClick={(e) => {
                         e.stopPropagation();
                         setSelectedNodeId(node.id);
@@ -350,7 +355,7 @@ export function Panel1_ASTGraph({
                             : "#58307d"
                         }
                         strokeWidth={isSearchMatch ? 2 : isSelectedTarget ? 2 : isPromoted ? 1.5 : 1}
-                        className="transition-colors"
+                        className="transition-all duration-150 group-hover:stroke-fuchsia-400 group-hover:stroke-[2px] group-hover:brightness-125"
                       />
 
                       {/* Node Label */}
@@ -417,45 +422,47 @@ export function Panel1_ASTGraph({
           </div>
 
           {/* Token Flamegraph Footer Bar */}
-          <div className="px-4 py-3 bg-[#0a0517]/95 border-t border-purple-500/20">
-            <div className="flex flex-wrap items-center justify-between text-xs font-mono mb-2">
+          <div className="px-4 py-2.5 bg-[#0a0517]/95 border-t border-purple-500/20">
+            <div className="flex flex-wrap items-center justify-between text-xs font-mono mb-1.5">
               <div className="flex items-center gap-2">
                 <Layers className="w-3.5 h-3.5 text-cosmicFuchsia" />
                 <span className="font-semibold text-purple-100">
-                  Context Knapsack Flamegraph:
+                  {mode === "developer" ? "Context Knapsack Flamegraph:" : "Context Optimization:"}
                 </span>
                 <span className="text-brandGreen font-bold">
-                  Input AST: {prunedTotalTokens.toLocaleString()} tok
+                  {prunedTotalTokens.toLocaleString()} tok active
                 </span>
                 <span className="text-purple-500/60">/</span>
                 <span className="text-purple-400/60 line-through">
-                  Raw Codebase: {rawTotalTokens.toLocaleString()} tok
+                  {rawTotalTokens.toLocaleString()} tok raw
                 </span>
               </div>
               <span className="font-display text-xs text-brandGreen font-bold tracking-wide">
-                -{tokenSavingsPct}% OPTIMIZATION (40,840 TOKENS SAVED)
+                -{tokenSavingsPct}% TOKENS SAVED
               </span>
             </div>
 
             {/* Visual Dual-Bar Flamegraph */}
-            <div className="relative w-full h-3.5 bg-[#06030e] rounded-full overflow-hidden border border-purple-500/30 flex shadow-inner">
+            <div className="relative w-full h-3 bg-[#06030e] rounded-full overflow-hidden border border-purple-500/30 flex shadow-inner">
               <div
                 className="h-full bg-gradient-to-r from-emerald-500 via-teal-400 to-cyan-400 shadow-[0_0_10px_#10b981]"
-                style={{ width: `${(prunedTotalTokens / rawTotalTokens) * 100}%` }}
+                style={{ width: `${Math.max(2, (prunedTotalTokens / (rawTotalTokens || 1)) * 100)}%` }}
                 title={`Active Context S*: ${prunedTotalTokens} tokens`}
               />
               <div
                 className="h-full bg-gradient-to-r from-purple-950/80 to-[#1e103a] opacity-90"
-                style={{ width: `${100 - (prunedTotalTokens / rawTotalTokens) * 100}%` }}
+                style={{ width: `${100 - (prunedTotalTokens / (rawTotalTokens || 1)) * 100}%` }}
                 title={`Pruned AST Savings: ${rawTotalTokens - prunedTotalTokens} tokens`}
               />
             </div>
 
-            <div className="flex justify-between items-center text-[10px] font-mono text-purple-300/60 mt-1.5">
-              <span>0 tokens</span>
-              <span className="text-purple-300/80">1-Line Stubs Replaced 84.2% Context Body</span>
-              <span>Ceiling B_context: 8,000 tok</span>
-            </div>
+            {mode === "developer" && (
+              <div className="flex justify-between items-center text-[10px] font-mono text-purple-300/60 mt-1">
+                <span>0 tokens</span>
+                <span className="text-purple-300/80">1-Line Stubs Replaced -{tokenSavingsPct}% Context</span>
+                <span>Ceiling B_context: 8,000 tok</span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -502,61 +509,99 @@ export function Panel1_ASTGraph({
             </div>
           </div>
 
-          {/* Token Economics Cards */}
-          <div className="grid grid-cols-3 gap-2 text-center font-mono">
-            <div className="bg-[#120a26]/70 p-2 rounded-xl border border-purple-500/20">
-              <span className="text-[9px] text-purple-300/60 block uppercase">Raw Cost</span>
-              <span className="text-white font-bold text-xs">{selectedNode.tokenCost} tok</span>
+          {/* Token Economics Cards (Developer) or Clean Savings Summary (Simple) */}
+          {mode === "developer" ? (
+            <div className="grid grid-cols-3 gap-2 text-center font-mono">
+              <div className="bg-[#120a26]/70 p-2 rounded-xl border border-purple-500/20">
+                <span className="text-[9px] text-purple-300/60 block uppercase">Raw Cost</span>
+                <span className="text-white font-bold text-xs">{selectedNode.tokenCost} tok</span>
+              </div>
+              <div className="bg-[#120a26]/70 p-2 rounded-xl border border-purple-500/20">
+                <span className="text-[9px] text-purple-300/60 block uppercase">Pruned Cost</span>
+                <span className="text-brandGreen font-bold text-xs">
+                  {selectedNode.selected ? selectedNode.tokenCost : selectedNode.stubTokenCost} tok
+                </span>
+              </div>
+              <div className="bg-[#120a26]/70 p-2 rounded-xl border border-purple-500/20">
+                <span className="text-[9px] text-purple-300/60 block uppercase">Token Savings</span>
+                <span className="text-cosmicFuchsia font-bold text-xs">
+                  {selectedNode.selected ? "0 tok" : `-${selectedNode.tokensSaved} tok`}
+                </span>
+              </div>
             </div>
-            <div className="bg-[#120a26]/70 p-2 rounded-xl border border-purple-500/20">
-              <span className="text-[9px] text-purple-300/60 block uppercase">Pruned Cost</span>
-              <span className="text-brandGreen font-bold text-xs">
-                {selectedNode.selected ? selectedNode.tokenCost : selectedNode.stubTokenCost} tok
+          ) : (
+            <div className="bg-[#120a26]/80 px-3 py-2 rounded-xl border border-purple-500/20 flex items-center justify-between text-xs font-mono">
+              <span className="text-purple-300/70">Context Impact:</span>
+              <span className={selectedNode.selected ? "text-emerald-400 font-bold" : "text-cosmicFuchsia font-bold"}>
+                {selectedNode.selected ? "Full Symbol Retained (Core Context)" : `1-Line Stub (-${selectedNode.tokensSaved} tok saved)`}
               </span>
             </div>
-            <div className="bg-[#120a26]/70 p-2 rounded-xl border border-purple-500/20">
-              <span className="text-[9px] text-purple-300/60 block uppercase">Token Savings</span>
-              <span className="text-cosmicFuchsia font-bold text-xs">
-                {selectedNode.selected ? "0 tok" : `-${selectedNode.tokensSaved} tok`}
-              </span>
-            </div>
-          </div>
+          )}
 
-          {/* Spacious Code Viewer: Active vs Full vs Stub */}
+          {/* Spacious Code Viewer */}
           <div className="flex-1 min-h-0 flex flex-col bg-[#06030e] rounded-xl border border-purple-500/25 overflow-hidden">
             <div className="flex items-center justify-between px-3 py-1.5 bg-[#130a26]/80 border-b border-purple-500/20 text-[11px] font-mono">
-              <span className="text-purple-300/70">Context Representation</span>
+              <span className="text-purple-300/70">
+                {mode === "developer" ? "Context Representation" : "Source Code View"}
+              </span>
               <div className="flex items-center gap-1">
-                <button
-                  onClick={() => setCodeTab("active")}
-                  className={`px-2 py-0.5 rounded text-[10px] transition-all ${
-                    codeTab === "active"
-                      ? "bg-purple-600/40 text-white font-semibold border border-purple-400/40"
-                      : "text-purple-300/60 hover:text-white"
-                  }`}
-                >
-                  Active ({selectedNode.selected ? "Full" : "Stub"})
-                </button>
-                <button
-                  onClick={() => setCodeTab("full")}
-                  className={`px-2 py-0.5 rounded text-[10px] transition-all ${
-                    codeTab === "full"
-                      ? "bg-purple-600/40 text-white font-semibold border border-purple-400/40"
-                      : "text-purple-300/60 hover:text-white"
-                  }`}
-                >
-                  Full AST Body
-                </button>
-                <button
-                  onClick={() => setCodeTab("stub")}
-                  className={`px-2 py-0.5 rounded text-[10px] transition-all ${
-                    codeTab === "stub"
-                      ? "bg-purple-600/40 text-white font-semibold border border-purple-400/40"
-                      : "text-purple-300/60 hover:text-white"
-                  }`}
-                >
-                  1-Line Stub
-                </button>
+                {mode === "developer" ? (
+                  <>
+                    <button
+                      onClick={() => setCodeTab("active")}
+                      className={`px-2 py-0.5 rounded text-[10px] transition-all ${
+                        codeTab === "active"
+                          ? "bg-purple-600/40 text-white font-semibold border border-purple-400/40"
+                          : "text-purple-300/60 hover:text-white"
+                      }`}
+                    >
+                      Active ({selectedNode.selected ? "Full" : "Stub"})
+                    </button>
+                    <button
+                      onClick={() => setCodeTab("full")}
+                      className={`px-2 py-0.5 rounded text-[10px] transition-all ${
+                        codeTab === "full"
+                          ? "bg-purple-600/40 text-white font-semibold border border-purple-400/40"
+                          : "text-purple-300/60 hover:text-white"
+                      }`}
+                    >
+                      Full AST Body
+                    </button>
+                    <button
+                      onClick={() => setCodeTab("stub")}
+                      className={`px-2 py-0.5 rounded text-[10px] transition-all ${
+                        codeTab === "stub"
+                          ? "bg-purple-600/40 text-white font-semibold border border-purple-400/40"
+                          : "text-purple-300/60 hover:text-white"
+                      }`}
+                    >
+                      1-Line Stub
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => setCodeTab("active")}
+                      className={`px-2.5 py-0.5 rounded text-[10px] transition-all ${
+                        codeTab === "active"
+                          ? "bg-purple-600/50 text-white font-semibold border border-purple-400/40"
+                          : "text-purple-300/60 hover:text-white"
+                      }`}
+                    >
+                      Optimized Code
+                    </button>
+                    <button
+                      onClick={() => setCodeTab("full")}
+                      className={`px-2.5 py-0.5 rounded text-[10px] transition-all ${
+                        codeTab === "full"
+                          ? "bg-purple-600/50 text-white font-semibold border border-purple-400/40"
+                          : "text-purple-300/60 hover:text-white"
+                      }`}
+                    >
+                      Original Full Code
+                    </button>
+                  </>
+                )}
               </div>
             </div>
 
@@ -573,16 +618,18 @@ export function Panel1_ASTGraph({
             </div>
           </div>
 
-          {/* Submodular Guarantee Footnote */}
-          <div className="p-2.5 rounded-xl bg-[#120a26]/60 border border-purple-500/20 flex items-center justify-between text-[10px] font-mono text-purple-300/70">
-            <span className="flex items-center gap-1 text-emerald-400">
-              <ShieldCheck className="w-3.5 h-3.5" />
-              Submodular Knapsack Optimal S*
-            </span>
-            <span className="text-purple-300 font-semibold">
-              {selectedNode.selected ? "High-Relevance Core" : "Type Signature Preserved"}
-            </span>
-          </div>
+          {/* Submodular Guarantee Footnote (Developer only) */}
+          {mode === "developer" && (
+            <div className="p-2.5 rounded-xl bg-[#120a26]/60 border border-purple-500/20 flex items-center justify-between text-[10px] font-mono text-purple-300/70">
+              <span className="flex items-center gap-1 text-emerald-400">
+                <ShieldCheck className="w-3.5 h-3.5" />
+                Submodular Knapsack Optimal S*
+              </span>
+              <span className="text-purple-300 font-semibold">
+                {selectedNode.selected ? "High-Relevance Core" : "Type Signature Preserved"}
+              </span>
+            </div>
+          )}
         </div>
       </div>
     </div>
