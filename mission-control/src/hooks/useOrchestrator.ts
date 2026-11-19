@@ -502,34 +502,49 @@ export function useOrchestrator() {
     });
   }, []);
 
-  // Approve quarantined action
-  const approveAction = useCallback(async (actionId: string, hmacToken: string) => {
-    try {
-      await fetch("http://localhost:8000/api/action/approve", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action_id: actionId,
-          hmac_token: hmacToken,
-          payload: "write:src/auth/session_guard.py:verified_patch",
-        }),
-      });
-    } catch {
-      // Offline fallback
-    }
+  // Approve quarantined action.
+  // Sends the exact payload the server signed; the UI only marks the action
+  // approved when the server accepts it. Actions without a signed payload are
+  // the built-in offline demo action and are approved locally.
+  const approveAction = useCallback(
+    async (actionId: string, hmacToken: string, signedPayload?: string) => {
+      const markApproved = (toast: string) => {
+        setTelemetry((prev) => ({
+          ...prev,
+          quarantinedAction: prev.quarantinedAction
+            ? { ...prev.quarantinedAction, is_approved: true, is_quarantined: false }
+            : null,
+        }));
+        setFailoverToast(toast);
+      };
 
-    setTelemetry((prev) => ({
-      ...prev,
-      quarantinedAction: prev.quarantinedAction
-        ? {
-            ...prev.quarantinedAction,
-            is_approved: true,
-            is_quarantined: false,
-          }
-        : null,
-    }));
-    setFailoverToast(`HMAC VERIFIED: Action ${actionId} approved and safely committed to main.`);
-  }, []);
+      if (!signedPayload) {
+        markApproved(`DEMO MODE: Action ${actionId} approved locally (no live backend action).`);
+        return;
+      }
+
+      try {
+        const res = await fetch("http://localhost:8000/api/action/approve", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action_id: actionId,
+            hmac_token: hmacToken,
+            payload: signedPayload,
+          }),
+        });
+        if (res.ok) {
+          markApproved(`HMAC VERIFIED: Action ${actionId} approved and committed.`);
+          return;
+        }
+        const body = await res.json().catch(() => ({}));
+        setFailoverToast(`APPROVAL REJECTED (${res.status}): ${body.detail ?? "verification failed"}`);
+      } catch {
+        setFailoverToast("APPROVAL FAILED: Orchestrator unreachable. Action remains quarantined.");
+      }
+    },
+    []
+  );
 
   // 1-Click Apply Tavily Fresh Patch
   const applyFreshPatch = useCallback((claimId: string) => {
@@ -694,6 +709,7 @@ export function useOrchestrator() {
             diff_payload: data.action_quarantine.diff_payload || data.generated_code,
             original_payload: data.original_code || `# Original code baseline`,
             hmac_token: data.action_quarantine.hmac_token,
+            signed_payload: data.action_quarantine.signed_payload,
             is_quarantined: data.action_quarantine.is_quarantined,
             is_approved: data.action_quarantine.is_approved,
             acoustic_prompt: `AEGIS-0 requests permission to modify ${data.action_quarantine.command_or_path}. Say 'Approve Alpha-7' to commit.`,

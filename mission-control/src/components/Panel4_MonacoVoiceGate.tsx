@@ -36,7 +36,7 @@ const DiffEditor = dynamic(
 
 interface Panel4Props {
   quarantinedAction: QuarantinedAction | null;
-  onApproveAction: (actionId: string, hmacToken: string) => void;
+  onApproveAction: (actionId: string, hmacToken: string, signedPayload?: string) => void;
   onExportAudit?: () => void;
   onRollbackDiff?: () => void;
 }
@@ -137,7 +137,11 @@ export function Panel4_MonacoVoiceGate({
         setVoiceApproved(true);
 
         // Automatically trigger cryptographic approval gate
-        onApproveAction(quarantinedAction.action_id, quarantinedAction.hmac_token);
+        onApproveAction(
+          quarantinedAction.action_id,
+          quarantinedAction.hmac_token,
+          quarantinedAction.signed_payload
+        );
       }, 1600);
     } else {
       setIsListening(false);
@@ -364,7 +368,8 @@ export function Panel4_MonacoVoiceGate({
                   if (quarantinedAction) {
                     onApproveAction(
                       quarantinedAction.action_id,
-                      quarantinedAction.hmac_token
+                      quarantinedAction.hmac_token,
+                      quarantinedAction.signed_payload
                     );
                   }
                 }}

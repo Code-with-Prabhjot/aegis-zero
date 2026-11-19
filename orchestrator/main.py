@@ -6,8 +6,9 @@ Tavily Freshness & Stale-API Verification, and HMAC-SHA256 Cryptographic Action 
 """
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
+import hmac
 import os
 import re
 import sys
@@ -49,10 +50,14 @@ from privacy_guard import PrivacyGuard
 from freshness_engine import FreshnessEngine
 from audit_trail import TamperEvidentAuditLedger
 
-# Institutional Shared Secret for HMAC Cryptographic Gates
+# Institutional Shared Secret for HMAC Cryptographic Gates.
+# Only the server ever signs or verifies with this key; clients never supply it.
 AEGIS_SECRET_KEY = os.getenv(
     "AEGIS_SECRET_KEY", "aegis-institutional-zero-trust-secret-2026"
 )
+
+# Quarantined actions expire if not approved within this window.
+ACTION_APPROVAL_TTL_SECONDS = int(os.getenv("AEGIS_ACTION_TTL_SECONDS", "900"))
 
 app = FastAPI(
     title="AEGIS-0 Orchestrator",
@@ -112,6 +117,11 @@ stream_indexer = StreamingASTIndex(pruner=pruner)
 total_tokens_saved_cumulative: int = 0
 quarantined_actions_store: Dict[str, ActionApprovalRequest] = {}
 quarantined_diff_snapshots: Dict[str, Dict[str, Any]] = {}
+# Server-side record of exactly what was signed for each quarantined action:
+# action_id -> {"signed_payload": str, "expires_at": datetime}
+pending_action_signatures: Dict[str, Dict[str, Any]] = {}
+# Action IDs whose approval has already been consumed (replay protection).
+consumed_action_ids: set = set()
 
 
 @app.get("/healthz")
@@ -540,6 +550,7 @@ async def orchestrate(req: OrchestrateRequest):
         hmac_token = guard.generate_hmac_action_token(
             action_id=action_id, payload=hmac_payload, secret_key=AEGIS_SECRET_KEY
         )
+        expires_at = datetime.now(timezone.utc) + timedelta(seconds=ACTION_APPROVAL_TTL_SECONDS)
 
         action_quarantine = ActionApprovalRequest(
             action_id=action_id,
@@ -547,10 +558,16 @@ async def orchestrate(req: OrchestrateRequest):
             command_or_path=target_path,
             diff_payload=final_code,
             hmac_token=hmac_token,
+            signed_payload=hmac_payload,
+            expires_at=expires_at.isoformat(),
             is_quarantined=True,
             is_approved=False,
         )
         quarantined_actions_store[action_id] = action_quarantine
+        pending_action_signatures[action_id] = {
+            "signed_payload": hmac_payload,
+            "expires_at": expires_at,
+        }
         quarantined_diff_snapshots[action_id] = {
             "target_path": target_path,
             "original_code": original_code or "# Original baseline",
@@ -634,47 +651,80 @@ async def orchestrate(req: OrchestrateRequest):
 async def approve_action(req: ActionApproveRequest):
     """
     Validates cryptographic HMAC-SHA256 signature and executes staged action.
-    Rejects any unverified or forged mutation payloads with HTTP 403 Forbidden.
-    """
-    secret = req.secret_key or AEGIS_SECRET_KEY
 
-    is_valid = guard.verify_action_token(
-        token=req.hmac_token,
-        action_id=req.action_id,
-        payload=req.payload,
-        secret_key=secret,
+    Zero-trust rules, all enforced server-side:
+    - Only actions this server quarantined can be approved (404 otherwise).
+    - Each approval is single-use (409 on replay).
+    - Approvals expire after AEGIS_ACTION_TTL_SECONDS (410 once expired).
+    - The HMAC is verified with the server secret only, and the payload must be
+      byte-identical to the one the server signed (403 otherwise).
+    """
+    if req.action_id in consumed_action_ids:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="ACTION_ALREADY_CONSUMED: This approval has already been used.",
+        )
+
+    pending = pending_action_signatures.get(req.action_id)
+    if pending is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="UNKNOWN_ACTION: No quarantined action with this ID.",
+        )
+
+    if datetime.now(timezone.utc) > pending["expires_at"]:
+        pending_action_signatures.pop(req.action_id, None)
+        audit_ledger.append_entry(
+            event_type="HMAC_REJECTED",
+            actor="action_gate",
+            payload={"action_id": req.action_id, "reason": "EXPIRED"},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="ACTION_EXPIRED: Approval window has closed; re-run the request.",
+        )
+
+    is_valid = (
+        hmac.compare_digest(
+            req.payload.encode("utf-8"), pending["signed_payload"].encode("utf-8")
+        )
+        and guard.verify_action_token(
+            token=req.hmac_token,
+            action_id=req.action_id,
+            payload=req.payload,
+            secret_key=AEGIS_SECRET_KEY,
+        )
     )
 
     if not is_valid:
+        audit_ledger.append_entry(
+            event_type="HMAC_REJECTED",
+            actor="action_gate",
+            payload={"action_id": req.action_id, "reason": "INVALID_SIGNATURE"},
+        )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="INVALID_HMAC_SIGNATURE: Action approval signature verification failed.",
         )
 
-    # Check store if present
-    if req.action_id in quarantined_actions_store:
-        item = quarantined_actions_store[req.action_id]
+    # Consume the approval before any side effects so it can never be replayed.
+    consumed_action_ids.add(req.action_id)
+    pending_action_signatures.pop(req.action_id, None)
+
+    item = quarantined_actions_store.get(req.action_id)
+    if item is not None:
         item.is_approved = True
         item.is_quarantined = False
 
     # Record snapshot in audit ledger for atomic rollback
-    snap = quarantined_diff_snapshots.get(req.action_id)
-    if snap:
-        audit_ledger.record_diff_snapshot(
-            action_id=req.action_id,
-            target_path=snap["target_path"],
-            original_code=snap["original_code"],
-            patched_code=snap["patched_code"],
-            actor="user_operator",
-        )
-    else:
-        audit_ledger.record_diff_snapshot(
-            action_id=req.action_id,
-            target_path=req.target_path or "generated_patch.py",
-            original_code="# Original code baseline",
-            patched_code=req.diff_payload or req.payload,
-            actor="user_operator",
-        )
+    snap = quarantined_diff_snapshots[req.action_id]
+    audit_ledger.record_diff_snapshot(
+        action_id=req.action_id,
+        target_path=snap["target_path"],
+        original_code=snap["original_code"],
+        patched_code=snap["patched_code"],
+        actor="user_operator",
+    )
 
     audit_ledger.append_entry(
         event_type="HMAC_APPROVED",

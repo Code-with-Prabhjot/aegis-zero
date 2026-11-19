@@ -327,20 +327,27 @@ def test_action_approval_gate_lifecycle():
     a cryptographically valid HMAC-SHA256 signature, and execute cleanly when approved.
     """
     client = TestClient(app)
-    guard = PrivacyGuard()
+    bifrost.mock_mode = True
+    bifrost.clear_chaos_fault()
+    bifrost.reset_circuit_breakers()
 
-    action_id = "act_test_security_gate"
     file_path = "sensitive_service.py"
-    diff_payload = "def patched_security(): return True\n"
-    payload_hash = hashlib.sha256(diff_payload.encode("utf-8")).hexdigest()
-    hmac_payload = f"write:{file_path}:{payload_hash}"
-
-    # Generate legitimate HMAC token
-    valid_token = guard.generate_hmac_action_token(
-        action_id=action_id,
-        payload=hmac_payload,
-        secret_key=AEGIS_SECRET_KEY,
+    orch = client.post(
+        "/api/orchestrate",
+        json={
+            "session_id": "test_gate_lifecycle",
+            "prompt": "write security patch to sensitive_service.py",
+            "proposed_action": "write_file",
+            "proposed_target": file_path,
+        },
     )
+    assert orch.status_code == 200
+    quarantine = orch.json()["action_quarantine"]
+    action_id = quarantine["action_id"]
+    valid_token = quarantine["hmac_token"]
+    hmac_payload = quarantine["signed_payload"]
+    payload_hash = hashlib.sha256(orch.json()["generated_code"].encode("utf-8")).hexdigest()
+    assert hmac_payload == f"write:{file_path}:{payload_hash}"
 
     # 1. Negative Test: Forged / Tampered HMAC signature must return 403 Forbidden
     forged_token = "deadbeef" * 8
