@@ -201,47 +201,116 @@ class ASTPruner:
 
         return distances
 
+    _STOPWORDS = frozenset("""
+        a an and are as at be been but by can could did do does for from get got had has have
+        how i if in into is it its let me my of on or our please should so than that the their
+        them then there these they this to under up us was we were what when where which while
+        who why will with would you your again become again also any all each every just more
+        most some such only own same other very self cls none true false return def class
+    """.split())
+
+    _CALLABLE_TYPES = ("function", "method", "class")
+
+    @staticmethod
+    def _stem(word: str) -> str:
+        """Tiny suffix stripper so 'stubs'/'stub', 'verified'/'verify' and
+        'computed'/'compute' share a term. Deliberately conservative."""
+        for suffix, repl in (("ies", "y"), ("ied", "y"), ("ing", ""), ("ed", ""), ("es", ""), ("s", "")):
+            if word.endswith(suffix) and len(word) - len(suffix) >= 3 and not word.endswith("ss"):
+                word = word[: len(word) - len(suffix)] + repl
+                break
+        if len(word) > 4 and word.endswith("e"):
+            word = word[:-1]
+        return word
+
+    @classmethod
+    def _terms(cls, text: str) -> List[str]:
+        """Splits snake_case and camelCase identifiers, lowercases, drops
+        stopwords and numbers, and stems."""
+        out: List[str] = []
+        for raw in re.findall(r"[A-Za-z][A-Za-z0-9]*", text):
+            for part in re.findall(r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|[0-9]+", raw):
+                w = part.lower()
+                if len(w) < 2 or w.isdigit() or w in cls._STOPWORDS:
+                    continue
+                out.append(cls._stem(w))
+        return out
+
+    @staticmethod
+    def _looks_like_identifier(token: str) -> bool:
+        return "_" in token or "." in token or bool(re.search(r"[a-z][A-Z]", token))
+
     def select_seeds(self, query: str, nodes: List[ASTNode], max_seeds: int = 5) -> List[str]:
         """
         Deterministically picks seed symbols for a query.
 
-        1. Identifiers in the query that exactly name a repository symbol.
-        2. Otherwise, the most lexically relevant symbols (ties broken by node_id).
+        1. Tokens in the query that exactly name a repository symbol. Plain
+           English words only match functions, methods and classes, so "ledger"
+           in a question doesn't seed a module variable called `ledger`;
+           code-like tokens (snake_case, CamelCase, dotted) match anything.
+        2. Otherwise, the top BM25-ranked functions/methods/classes (ties by node_id).
         3. Otherwise, the first symbol by node_id.
         """
         candidates = [n for n in nodes if n.node_type not in ("import", "fallback")]
         if not candidates:
             return []
 
-        query_idents = set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", query))
+        tokens = set(re.findall(r"[A-Za-z_][A-Za-z0-9_.]*[A-Za-z0-9_]|[A-Za-z_]", query))
         exact = sorted({
             n.name for n in candidates
-            if any(self._matches_seed(n, w) for w in query_idents)
+            for w in tokens
+            if self._matches_seed(n, w)
+            and (n.node_type in self._CALLABLE_TYPES or self._looks_like_identifier(w))
         })
         if exact:
             return exact[:max_seeds]
 
-        scores = self.lexical_relevance(query, candidates)
-        ranked = sorted(candidates, key=lambda n: (-scores.get(n.node_id, 0.0), n.node_id))
-        top = [n.name for n in ranked if scores.get(n.node_id, 0.0) > 0][:1]
+        # Seeds are callables/classes; constants and statements are reached via
+        # graph distance rather than seeding the search themselves.
+        pool = [n for n in candidates if n.node_type in self._CALLABLE_TYPES] or candidates
+        scores = self.lexical_relevance(query, pool)
+        ranked = sorted(pool, key=lambda n: (-scores.get(n.node_id, 0.0), n.node_id))
+        top = [n.name for n in ranked if scores.get(n.node_id, 0.0) > 0][: min(3, max_seeds)]
         if top:
             return top
         return [min(candidates, key=lambda n: n.node_id).name]
 
-    def lexical_relevance(self, query: str, nodes: List[ASTNode]) -> Dict[str, float]:
+    def lexical_relevance(
+        self, query: str, nodes: List[ASTNode], k1: float = 1.2, b: float = 0.75
+    ) -> Dict[str, float]:
         """
-        Lexical similarity of each node to the query in [0, 1], keyed by node_id.
-        Fraction of query words found in the node's name and leading source.
+        BM25 relevance of each node to the query, normalised to [0, 1] and keyed
+        by node_id. A node's document is its source with identifiers split
+        (snake_case / camelCase) and stemmed; name terms are counted three
+        times so a symbol's own name outweighs words it merely mentions.
         """
-        query_words = set(re.findall(r"\w+", query.lower()))
-        scores: Dict[str, float] = {}
+        q_terms = set(self._terms(query))
+        if not q_terms or not nodes:
+            return {n.node_id: 0.0 for n in nodes}
+
+        docs: Dict[str, collections.Counter] = {}
         for n in nodes:
-            node_words = set(re.findall(r"\w+", (n.name + " " + n.raw_source[:300]).lower()))
-            overlap = (
-                len(query_words & node_words) / float(len(query_words)) if query_words else 0.0
-            )
-            scores[n.node_id] = min(1.0, max(0.0, overlap))
-        return scores
+            terms = self._terms(n.name) * 3 + self._terms(n.raw_source)
+            docs[n.node_id] = collections.Counter(terms)
+
+        n_docs = len(docs)
+        avg_len = sum(sum(c.values()) for c in docs.values()) / n_docs or 1.0
+        df = {t: sum(1 for c in docs.values() if t in c) for t in q_terms}
+
+        raw_scores: Dict[str, float] = {}
+        for node_id, counts in docs.items():
+            length = sum(counts.values())
+            score = 0.0
+            for t in q_terms:
+                tf = counts.get(t, 0)
+                if not tf:
+                    continue
+                idf = math.log(1 + (n_docs - df[t] + 0.5) / (df[t] + 0.5))
+                score += idf * (tf * (k1 + 1)) / (tf + k1 * (1 - b + b * length / avg_len))
+            raw_scores[node_id] = score
+
+        top = max(raw_scores.values()) or 1.0
+        return {nid: sc / top for nid, sc in raw_scores.items()}
 
     def generate_1line_stub(
         self,
@@ -591,9 +660,16 @@ class ASTPruner:
                 "density": density,
             })
 
-        # Sort candidates: Priority first (Seeds -> 1-hop -> 2-hop -> Unreachable),
-        # then density descending, then node_id so ties are broken deterministically.
-        scored_candidates.sort(key=lambda x: (x["priority"], -x["density"], x["node"].node_id))
+        # Sort candidates: seeds first, then by hybrid relevance (value), then by
+        # density so cheaper nodes win ties, then node_id for determinism.
+        # Ranking purely by hop tier let every 1-hop neighbour outrank a highly
+        # relevant 2-hop symbol regardless of what the query asked about.
+        scored_candidates.sort(key=lambda x: (
+            0 if x["priority"] == 0 else 1,
+            -round(x["relevance"], 6),
+            -x["density"],
+            x["node"].node_id,
+        ))
 
         # Step 3: Baseline token cost with all non-imports stubbed and imports full
         baseline_tokens = sum(n.token_cost for n in imports) + sum(
