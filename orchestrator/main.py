@@ -48,6 +48,7 @@ from orchestrator.pathway_stream import StreamingASTIndex
 from orchestrator.workspace import Workspace, WorkspaceError
 from privacy_guard import PrivacyGuard
 from freshness_engine import FreshnessEngine
+from package_metadata import parse_dependency_pins
 from audit_trail import TamperEvidentAuditLedger
 
 # Model-driven expansion of stubbed symbols: rounds per request, symbols per round.
@@ -622,7 +623,10 @@ async def orchestrate(req: OrchestrateRequest):
     # --------------------------------------------------------------------------
     # Step 5: Tavily Claims Extraction, Empirical Freshness & Auto-Patch (PS-06)
     # --------------------------------------------------------------------------
-    audit_res = freshness.audit_and_patch(dispatch_res.content)
+    pin_root = resolved_repo if resolved_repo and os.path.isdir(resolved_repo) else REPO_ROOT
+    audit_res = freshness.audit_and_patch(
+        dispatch_res.content, dependency_pins=parse_dependency_pins(pin_root)
+    )
     final_code = audit_res["patched_code"]
     original_code = (
         audit_res["original_code"] if audit_res["patches_applied"] else None
