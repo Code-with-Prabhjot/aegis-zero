@@ -10,7 +10,6 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
 import os
-import re
 import sys
 import uuid
 from typing import Dict, List, Optional, Any
@@ -347,11 +346,7 @@ async def orchestrate(req: OrchestrateRequest):
 
         if all_repo_nodes:
             raw_tokens = sum(n.token_cost for n in all_repo_nodes)
-            prompt_words = set(re.findall(r"[A-Za-z0-9_]+", req.prompt))
-            node_names = {n.name for n in all_repo_nodes if n.node_type != "import"}
-            seed_symbols = [w for w in prompt_words if w in node_names]
-            if not seed_symbols and node_names:
-                seed_symbols = [list(node_names)[0]]
+            seed_symbols = pruner.select_seeds(req.prompt, all_repo_nodes)
 
             # Calibrate budget to ensure >= 70% compression (target ~25% baseline)
             calibrated_budget = min(req.max_token_budget, max(1200, int(raw_tokens * 0.25)))
@@ -389,11 +384,7 @@ async def orchestrate(req: OrchestrateRequest):
 
             try:
                 nodes = pruner.parse_source(fname, code)
-                prompt_words = re.findall(r"[A-Za-z0-9_]+", req.prompt)
-                node_names = {n.name for n in nodes}
-                seed_symbols = [w for w in prompt_words if w in node_names]
-                if not seed_symbols and nodes:
-                    seed_symbols = [nodes[0].name]
+                seed_symbols = pruner.select_seeds(req.prompt, nodes)
 
                 pruned_code, stats = pruner.prune_context(
                     nodes=nodes,

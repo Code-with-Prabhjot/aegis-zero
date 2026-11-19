@@ -70,9 +70,10 @@ def isolated_leaf() -> str:
     # BFS hop distance starting from func_a as seed
     distances = pruner.compute_hop_distances(nodes, seed_symbols=["func_a"])
 
-    assert distances["func_a"] == 0.0, "Seed node must have distance 0"
-    assert distances["func_b"] == 1.0, "1-hop mutual neighbor must have distance 1"
-    assert distances["isolated_leaf"] == float("inf"), "Disconnected node must be infinite distance"
+    ids = {n.name: n.node_id for n in nodes}
+    assert distances[ids["func_a"]] == 0.0, "Seed node must have distance 0"
+    assert distances[ids["func_b"]] == 1.0, "1-hop mutual neighbor must have distance 1"
+    assert distances[ids["isolated_leaf"]] == float("inf"), "Disconnected node must be infinite distance"
 
     # Context pruning execution with knapsack
     hybrid_code, metrics = pruner.prune_context(

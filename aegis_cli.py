@@ -11,7 +11,6 @@ import argparse
 import asyncio
 import hashlib
 import os
-import re
 import sys
 import uuid
 from typing import List, Dict, Any, Optional
@@ -171,11 +170,7 @@ async def run_cli(
 
     if all_nodes:
         raw_tokens = sum(n.token_cost for n in all_nodes)
-        prompt_words = set(re.findall(r"[A-Za-z0-9_]+", prompt))
-        node_names = {n.name for n in all_nodes if n.node_type != "import"}
-        seed_symbols = [w for w in prompt_words if w in node_names]
-        if not seed_symbols and node_names:
-            seed_symbols = [list(node_names)[0]]
+        seed_symbols = pruner.select_seeds(prompt, all_nodes)
 
         calibrated_budget = min(8000, max(1200, int(raw_tokens * 0.25)))
         hybrid_code, ast_stats = pruner.prune_context(
@@ -371,9 +366,7 @@ def run_benchmark() -> int:
         if not nodes:
             continue
         raw_t = sum(n.token_cost for n in nodes)
-        node_names = {n.name for n in nodes if n.node_type != "import"}
-        words = set(re.findall(r"[A-Za-z0-9_]+", sample_query))
-        seeds = [w for w in words if w in node_names] or (list(node_names)[:1] if node_names else [])
+        seeds = pruner.select_seeds(sample_query, nodes)
         budget = min(8000, max(1200, int(raw_t * 0.25)))
         hybrid_code, stats = pruner.prune_context(
             nodes=nodes,
