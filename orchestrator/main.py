@@ -15,6 +15,7 @@ import uuid
 from typing import Dict, List, Optional, Any
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, status
+from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 # Ensure all subpackages are resolvable on sys.path
@@ -47,6 +48,7 @@ from orchestrator.budget_ledger import BudgetLedger
 from orchestrator.bifrost_client import BifrostClient
 from orchestrator.pathway_stream import StreamingASTIndex
 from orchestrator.workspace import Workspace, WorkspaceError
+from orchestrator.receipts import build_receipt, render_html
 from privacy_guard import PrivacyGuard
 from freshness_engine import FreshnessEngine
 from package_metadata import parse_dependency_pins
@@ -139,6 +141,9 @@ quarantined_diff_snapshots: Dict[str, Dict[str, Any]] = {}
 # Server-side record of exactly what was signed for each quarantined action:
 # action_id -> {"signed_payload": str, "expires_at": datetime}
 pending_action_signatures: Dict[str, Dict[str, Any]] = {}
+# Most recent run receipts, oldest evicted first.
+MAX_STORED_RECEIPTS = 100
+receipts_store: Dict[str, Dict[str, Any]] = {}
 # Action IDs whose approval has already been consumed (replay protection).
 consumed_action_ids: set = set()
 # Writes actually applied to the workspace, for byte-exact rollback:
@@ -791,7 +796,7 @@ async def orchestrate(req: OrchestrateRequest):
         },
     )
 
-    return OrchestrateResponse(
+    response = OrchestrateResponse(
         session_id=session_id,
         status=action_status,
         model_used=dispatch_res.model,
@@ -827,6 +832,51 @@ async def orchestrate(req: OrchestrateRequest):
         expansion_skipped_reason=expansion_skipped_reason,
         prompt_cache=prompt_cache,
     )
+
+    # Per-run token receipt (JSON + HTML via /api/receipts/{run_id}).
+    tier_pricing = ledger.pricing.get(dispatch_res.tier)
+    unpruned_extra = (
+        max(0, raw_tokens - pruned_tokens) * tier_pricing.input_per_mtok / 1_000_000.0
+        if tier_pricing else 0.0
+    )
+    bundle = audit_ledger.export_compliance_bundle()
+    receipt = build_receipt(
+        session_id=session_id,
+        prompt=req.prompt,
+        status=response.status,
+        model_used=response.model_used,
+        model_tier=response.model_tier.value,
+        failover_chain=response.failover_chain,
+        raw_tokens=raw_tokens,
+        context_tokens=pruned_tokens,
+        expansion_tokens=expansion_tokens,
+        cached_prompt_tokens=cached_tokens_total,
+        cost_usd=response.cost_usd,
+        unpruned_extra_cost_usd=unpruned_extra,
+        selected_symbols=[
+            n["name"] for n in ast_nodes_output if n["is_selected"] and n["node_type"] != "import"
+        ],
+        stubbed_count=sum(1 for n in ast_nodes_output if not n["is_selected"]),
+        expansions=[e["symbol"] for e in expansions],
+        freshness=freshness_verifications,
+        action=(
+            {
+                "action_id": action_quarantine.action_id,
+                "category": action_quarantine.category.value,
+                "target": action_quarantine.command_or_path,
+                "status": "QUARANTINED",
+            }
+            if action_quarantine else None
+        ),
+        privacy_tainted=privacy_tainted,
+        audit_head=bundle.get("latest_hash"),
+        audit_chain_valid=bundle.get("chain_valid"),
+    )
+    receipts_store[receipt["run_id"]] = receipt
+    while len(receipts_store) > MAX_STORED_RECEIPTS:
+        receipts_store.pop(next(iter(receipts_store)))
+    response.run_id = receipt["run_id"]
+    return response
 
 
 @app.post("/api/action/approve")
@@ -965,6 +1015,32 @@ async def approve_action(req: ActionApproveRequest):
         "workspace_root": workspace.root if is_write else None,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+
+
+@app.get("/api/receipts")
+async def list_receipts():
+    """Most recent run receipts (newest first), summary fields only."""
+    return [
+        {
+            "run_id": r["run_id"],
+            "issued_at": r["issued_at"],
+            "status": r["status"],
+            "tokens_saved": r["tokens"]["saved"],
+            "cost_usd": r["cost_usd"]["actual"],
+        }
+        for r in reversed(list(receipts_store.values()))
+    ]
+
+
+@app.get("/api/receipts/{run_id}")
+async def get_receipt(run_id: str, format: str = "json"):
+    """A run's token receipt as JSON, or as a standalone HTML page with ?format=html."""
+    receipt = receipts_store.get(run_id)
+    if receipt is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="UNKNOWN_RUN")
+    if format == "html":
+        return HTMLResponse(render_html(receipt))
+    return receipt
 
 
 @app.get("/api/audit/export")
