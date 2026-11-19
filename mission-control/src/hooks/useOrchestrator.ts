@@ -628,6 +628,8 @@ export function useOrchestrator() {
   }, []);
 
   const [isExecuting, setIsExecuting] = useState(false);
+  // run_id of the latest live orchestration, for its token receipt
+  const [lastRunId, setLastRunId] = useState<string | null>(null);
 
   // Live Dogfooding Agent Runner
   const runLiveAgent = useCallback(
@@ -653,6 +655,7 @@ export function useOrchestrator() {
         }
 
         const data = await response.json();
+        if (data.run_id) setLastRunId(data.run_id);
 
         // Map live AST nodes to visualization graph
         let convertedNodes: ASTGraphNode[] = [];
@@ -923,5 +926,7 @@ export function useOrchestrator() {
     testInjectionAttack,
     exportAuditBundle,
     rollbackLastDiff,
+    lastRunId,
+    receiptUrl: lastRunId ? apiUrl(`/api/receipts/${lastRunId}?format=html`) : null,
   };
 }

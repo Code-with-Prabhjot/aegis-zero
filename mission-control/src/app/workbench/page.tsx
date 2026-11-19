@@ -7,7 +7,7 @@ import { Panel2_ChaosBudget } from "@/components/Panel2_ChaosBudget";
 import { Panel3_TavilyScorecard } from "@/components/Panel3_TavilyScorecard";
 import { Panel4_MonacoVoiceGate } from "@/components/Panel4_MonacoVoiceGate";
 import { useOrchestrator } from "@/hooks/useOrchestrator";
-import { Bell, Play, ShieldAlert, Terminal } from "lucide-react";
+import { Bell, Play, Receipt, ShieldAlert, Terminal } from "lucide-react";
 
 export default function MissionControlPage() {
   const [activeStage, setActiveStage] = useState<1 | 2 | 3>(1);
@@ -33,6 +33,7 @@ export default function MissionControlPage() {
     testInjectionAttack,
     exportAuditBundle,
     rollbackLastDiff,
+    receiptUrl,
   } = useOrchestrator();
 
   // Keyboard shortcut listener for switching stages via keys 1, 2, 3
@@ -122,6 +123,20 @@ export default function MissionControlPage() {
               <Play className="w-3 h-3 fill-current" />
               <span>{isExecuting ? "Executing..." : "Run Live Agent"}</span>
             </button>
+
+            {/* Token receipt for the latest live run */}
+            {receiptUrl && (
+              <a
+                href={receiptUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-emerald-500/40 hover:bg-emerald-950/40 text-emerald-300 hover:text-emerald-100 font-mono text-xs transition-all"
+                title="Open the token receipt for the latest run"
+              >
+                <Receipt className="w-3 h-3" />
+                <span>Receipt</span>
+              </a>
+            )}
 
             {/* Secondary Crimson Outline Button [Test Injection Attack] */}
             <button
