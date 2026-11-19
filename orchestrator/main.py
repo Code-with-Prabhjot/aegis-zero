@@ -85,10 +85,19 @@ app = FastAPI(
     description="Zero-Trust Token-Optimal Autonomous Coding & Live-Verification Engine",
 )
 
-# Enable CORS for Next.js Mission Control Workbench
+# Enable CORS for the Next.js Mission Control Workbench. A wildcard origin with
+# credentials would let any site drive the action gate from a user's browser,
+# so allowed origins are explicit (comma-separated AEGIS_CORS_ORIGINS).
+CORS_ORIGINS = [
+    o.strip()
+    for o in os.getenv(
+        "AEGIS_CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"
+    ).split(",")
+    if o.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
