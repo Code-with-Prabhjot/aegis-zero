@@ -7,6 +7,7 @@ with zero loss of conversation context or AST state.
 """
 
 import asyncio
+import hashlib
 from datetime import datetime, timezone
 import os
 import re
@@ -94,6 +95,7 @@ class BifrostClient:
         timeout_seconds: float = 10.0,
         mock_mode: Optional[bool] = None,
     ):
+        self._prefix_cache: Dict[tuple, float] = {}
         self.bifrost_url = bifrost_url or os.getenv("BIFROST_GATEWAY_URL", "http://localhost:8080/v1")
         self.ollama_url = ollama_url or os.getenv("OLLAMA_ENCLAVE_URL", "http://localhost:11434")
         self.timeout_seconds = timeout_seconds
@@ -198,8 +200,17 @@ class BifrostClient:
         system_ctx = next((m.get("content", "") for m in messages if m.get("role") == "system"), "")
         is_first_turn = not any(m.get("role") == "assistant" for m in messages)
         if is_first_turn and "EXPAND:" in system_ctx:
-            for ident in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", user_prompt):
-                if re.search(rf"^\s*(?:async\s+)?def {re.escape(ident)}\(.*: \.\.\.$", system_ctx, re.MULTILINE):
+            user_ctx = "\n".join(m.get("content", "") for m in messages if m.get("role") == "user")
+            # Only identifiers the user actually asked about, not attached code.
+            question = user_prompt.rsplit("Request: ", 1)[-1]
+            for ident in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", question):
+                stubbed = re.search(
+                    rf"^\s*(?:async\s+)?def {re.escape(ident)}\(.*: \.\.\.$", system_ctx, re.MULTILINE
+                )
+                full_in_user = re.search(
+                    rf"^\s*(?:async\s+)?def {re.escape(ident)}\(.*:\s*$", user_ctx, re.MULTILINE
+                )
+                if stubbed and not full_in_user:
                     return f"EXPAND: {ident}"
 
         # Check prompt context for targeted scenarios
@@ -245,6 +256,27 @@ class BifrostClient:
                 "    return {'status': 'success', 'result': 42}\n"
             )
 
+    # Providers keep prompt-cache entries for about 5 minutes.
+    PREFIX_CACHE_TTL_SECONDS = 300
+    # Providers don't cache very short prefixes.
+    PREFIX_CACHE_MIN_TOKENS = 1024
+
+    def _simulate_prefix_cache(self, model_name: str, messages: List[Dict[str, str]]) -> int:
+        """
+        Offline stand-in for a provider prefix cache: if the same system
+        prompt was sent to the same model within the TTL, report its tokens as
+        cached, exactly as a provider's usage block would.
+        """
+        system = next((m.get("content", "") for m in messages if m.get("role") == "system"), "")
+        tokens = self.count_tokens(system)
+        if tokens < self.PREFIX_CACHE_MIN_TOKENS:
+            return 0
+        key = (model_name, hashlib.sha256(system.encode("utf-8")).hexdigest())
+        now = time.time()
+        hit = key in self._prefix_cache and now - self._prefix_cache[key] < self.PREFIX_CACHE_TTL_SECONDS
+        self._prefix_cache[key] = now
+        return tokens if hit else 0
+
     async def _try_call_provider(
         self,
         model_info: Dict[str, Any],
@@ -282,6 +314,7 @@ class BifrostClient:
                 prompt_tokens=p_tokens,
                 completion_tokens=c_tokens,
                 total_tokens=p_tokens + c_tokens,
+                cached_prompt_tokens=self._simulate_prefix_cache(model_name, messages),
             )
 
         # 3. Network Call (Bifrost or Ollama)
@@ -315,9 +348,15 @@ class BifrostClient:
                     if "choices" in data
                     else data.get("message", {}).get("content", "")
                 )
-                usage = data.get("usage", {})
+                usage = data.get("usage", {}) or {}
                 p_tokens = usage.get("prompt_tokens", 0)
                 c_tokens = usage.get("completion_tokens", 0)
+                # OpenAI-style and Anthropic-style cache usage fields.
+                cached_tokens = int(
+                    (usage.get("prompt_tokens_details") or {}).get("cached_tokens", 0)
+                    or usage.get("cache_read_input_tokens", 0)
+                    or 0
+                )
 
                 return BifrostCompletionResponse(
                     id=data.get("id", str(uuid.uuid4())),
@@ -327,6 +366,7 @@ class BifrostClient:
                     prompt_tokens=p_tokens,
                     completion_tokens=c_tokens,
                     total_tokens=p_tokens + c_tokens,
+                    cached_prompt_tokens=cached_tokens,
                 )
 
         except (httpx.ConnectError, httpx.TimeoutException, httpx.NetworkError):
