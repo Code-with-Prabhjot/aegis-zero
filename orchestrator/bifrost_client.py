@@ -9,9 +9,11 @@ with zero loss of conversation context or AST state.
 import asyncio
 from datetime import datetime, timezone
 import os
+import re
 import time
 import uuid
 from typing import Dict, List, Optional, Any
+
 import httpx
 import tiktoken
 
@@ -200,6 +202,15 @@ class BifrostClient:
             if m.get("role") == "user":
                 user_prompt = m.get("content", "")
                 break
+
+        # Expansion protocol: on the first turn, if the user names a symbol
+        # that the context only shows as a signature stub, ask for its body.
+        system_ctx = next((m.get("content", "") for m in messages if m.get("role") == "system"), "")
+        is_first_turn = not any(m.get("role") == "assistant" for m in messages)
+        if is_first_turn and "EXPAND:" in system_ctx:
+            for ident in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", user_prompt):
+                if re.search(rf"^\s*(?:async\s+)?def {re.escape(ident)}\(.*: \.\.\.$", system_ctx, re.MULTILINE):
+                    return f"EXPAND: {ident}"
 
         # Check prompt context for targeted scenarios
         if "fibonacci" in user_prompt.lower():

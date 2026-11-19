@@ -202,6 +202,11 @@ class OrchestrateResponse(BaseModel):
     action_quarantine: Optional[ActionApprovalRequest] = None
     recovery_checkpoint: Optional[Dict[str, Any]] = None
     ast_nodes: List[Dict[str, Any]] = Field(default_factory=list)
+    # On-demand expansion of stubbed symbols requested by the model
+    expansions: List[Dict[str, Any]] = Field(default_factory=list)
+    expansion_tokens: int = 0
+    expansion_rounds: int = 0
+    expansion_skipped_reason: Optional[str] = None
 
 
 class RedTeamRequest(BaseModel):

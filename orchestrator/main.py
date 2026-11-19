@@ -50,6 +50,17 @@ from privacy_guard import PrivacyGuard
 from freshness_engine import FreshnessEngine
 from audit_trail import TamperEvidentAuditLedger
 
+# Model-driven expansion of stubbed symbols: rounds per request, symbols per round.
+MAX_EXPANSION_ROUNDS = int(os.getenv("AEGIS_MAX_EXPANSION_ROUNDS", "2"))
+MAX_EXPANSIONS_PER_ROUND = 3
+
+EXPANSION_INSTRUCTIONS = (
+    "Symbols shown as signatures ending in `: ...` are stubs: their bodies were "
+    "omitted to save tokens. If you need a stub's full body to answer correctly, "
+    "reply with ONLY lines of the form `EXPAND: <SymbolName>` (at most 3) and "
+    "nothing else; the bodies will be sent back to you. Otherwise answer directly."
+)
+
 # Institutional Shared Secret for HMAC Cryptographic Gates.
 # Only the server ever signs or verifies with this key; clients never supply it.
 AEGIS_SECRET_KEY = os.getenv(
@@ -354,6 +365,9 @@ async def orchestrate(req: OrchestrateRequest):
     pruned_tokens = 0
     context_chunks = []
     ast_nodes_output: List[Dict[str, Any]] = []
+    # Nodes the model may ask to expand, and those already shown in full.
+    expandable_nodes: List[Any] = []
+    full_node_ids: set = set()
 
     if resolved_repo and os.path.exists(resolved_repo):
         all_repo_nodes, delta_metrics = stream_indexer.index_repository(resolved_repo)
@@ -382,6 +396,8 @@ async def orchestrate(req: OrchestrateRequest):
             context_chunks.append(hybrid_code)
 
             selected_ids = set(metrics.get("selected_node_ids", []))
+            expandable_nodes.extend(all_repo_nodes)
+            full_node_ids |= selected_ids
             for n in all_repo_nodes:
                 is_sel = (n.node_type == "import" or n.node_id in selected_ids)
                 ast_nodes_output.append({
@@ -417,6 +433,8 @@ async def orchestrate(req: OrchestrateRequest):
                 context_chunks.append(f"# File: {fname}\n{pruned_code}")
 
                 sel_ids = set(stats.get("selected_node_ids", []))
+                expandable_nodes.extend(nodes)
+                full_node_ids |= sel_ids
                 for n in nodes:
                     ast_nodes_output.append({
                         "node_id": n.node_id,
@@ -502,16 +520,16 @@ async def orchestrate(req: OrchestrateRequest):
     # Step 4: Bifrost Model Dispatch with Circuit-Breaker Failover
     # --------------------------------------------------------------------------
     assembled_context = "\n\n".join(context_chunks)
+    has_stubs = any(
+        n.node_type != "import" and n.node_id not in full_node_ids for n in expandable_nodes
+    )
+    system_prompt = "You are AEGIS-0, an institutional-grade token-optimal coding agent."
+    if has_stubs:
+        system_prompt += "\n" + EXPANSION_INSTRUCTIONS
+    if assembled_context:
+        system_prompt += f"\nRepository Context:\n{assembled_context}"
     messages = [
-        {
-            "role": "system",
-            "content": (
-                "You are AEGIS-0, an institutional-grade token-optimal coding agent.\n"
-                f"Repository Context:\n{assembled_context}"
-                if assembled_context
-                else "You are AEGIS-0, an institutional-grade token-optimal coding agent."
-            ),
-        },
+        {"role": "system", "content": system_prompt},
         {"role": "user", "content": req.prompt},
     ]
 
@@ -521,6 +539,85 @@ async def orchestrate(req: OrchestrateRequest):
         privacy_lock=airgap_locked,
         target_tier=selected_tier,
     )
+
+    # --------------------------------------------------------------------------
+    # Step 4b: On-Demand Symbol Expansion
+    # The model may ask for the bodies of stubbed symbols instead of guessing.
+    # Each round is budget-checked first and its cost committed to the ledger.
+    # --------------------------------------------------------------------------
+    expansions: List[Dict[str, Any]] = []
+    expansion_rounds = 0
+    expansion_skipped_reason: Optional[str] = None
+    turn_cost_usd = 0.0
+
+    while expansion_rounds < MAX_EXPANSION_ROUNDS and expandable_nodes:
+        requested = pruner.parse_expand_requests(dispatch_res.content, MAX_EXPANSIONS_PER_ROUND)
+        if not requested:
+            break
+        bodies = pruner.expand_symbols(
+            expandable_nodes, requested,
+            exclude_ids=full_node_ids | {e["node_id"] for e in expansions},
+        )
+        if not bodies:
+            expansion_skipped_reason = "UNKNOWN_OR_ALREADY_FULL"
+            break
+
+        body_tokens = sum(int(b["tokens"]) for b in bodies)
+        next_input = dispatch_res.prompt_tokens + dispatch_res.completion_tokens + body_tokens
+        # Settle the round that asked before deciding whether to pay for another.
+        ledger.commit_turn_cost(
+            session_id=session_id,
+            actual_input_tokens=dispatch_res.prompt_tokens,
+            actual_output_tokens=dispatch_res.completion_tokens,
+            tier=dispatch_res.tier,
+        )
+        turn_cost_usd += ledger._calculate_bound_cost(
+            dispatch_res.prompt_tokens, dispatch_res.completion_tokens, dispatch_res.tier
+        )
+        if not ledger.can_afford(session_id, next_input, dispatch_res.tier):
+            expansion_skipped_reason = "BUDGET"
+            dispatch_res.prompt_tokens = 0
+            dispatch_res.completion_tokens = 0
+            break
+
+        expansion_text = "\n\n".join(
+            f"# ===== {b['symbol']} ({b['file_path']}) =====\n{b['source']}" for b in bodies
+        )
+        messages = messages + [
+            {"role": "assistant", "content": dispatch_res.content},
+            {"role": "user", "content": f"Requested symbol bodies:\n{expansion_text}\n\nNow answer the original request."},
+        ]
+        expansions.extend({k: b[k] for k in ("symbol", "node_id", "file_path", "tokens")} for b in bodies)
+        expansion_rounds += 1
+
+        state = ledger.get_session(session_id)
+        dispatch_res = await bifrost.dispatch(
+            messages=messages,
+            budget_remaining_usd=max(0.0, budget_cap - state.cumulative_cost_usd),
+            privacy_lock=airgap_locked,
+            target_tier=dispatch_res.tier,
+        )
+
+    expansion_tokens = sum(int(e["tokens"]) for e in expansions)
+    if expansion_tokens:
+        # Expanded bodies were sent to the model, so they don't count as saved.
+        total_tokens_saved_cumulative -= min(tokens_saved, expansion_tokens)
+        tokens_saved = max(0, tokens_saved - expansion_tokens)
+        compression_ratio = round(tokens_saved / raw_tokens, 4) if raw_tokens > 0 else 0.0
+        audit_ledger.append_entry(
+            event_type="CONTEXT_EXPANDED",
+            actor="orchestrator",
+            payload={
+                "session_id": session_id,
+                "symbols": [e["symbol"] for e in expansions],
+                "tokens": expansion_tokens,
+                "rounds": expansion_rounds,
+            },
+        )
+
+    # Strip any unanswered expansion requests so they are never treated as code.
+    if pruner.parse_expand_requests(dispatch_res.content):
+        dispatch_res.content = pruner.EXPAND_REQUEST.sub("", dispatch_res.content).strip()
 
     # --------------------------------------------------------------------------
     # Step 5: Tavily Claims Extraction, Empirical Freshness & Auto-Patch (PS-06)
@@ -654,7 +751,8 @@ async def orchestrate(req: OrchestrateRequest):
         tokens_saved=tokens_saved,
         compression_ratio=compression_ratio,
         cost_usd=round(
-            ledger._calculate_bound_cost(
+            turn_cost_usd
+            + ledger._calculate_bound_cost(
                 dispatch_res.prompt_tokens,
                 dispatch_res.completion_tokens,
                 dispatch_res.tier,
@@ -669,6 +767,10 @@ async def orchestrate(req: OrchestrateRequest):
         freshness_verifications=freshness_verifications,
         action_quarantine=action_quarantine,
         ast_nodes=ast_nodes_output,
+        expansions=expansions,
+        expansion_tokens=expansion_tokens,
+        expansion_rounds=expansion_rounds,
+        expansion_skipped_reason=expansion_skipped_reason,
     )
 
 
