@@ -5,7 +5,7 @@
 **Dual-Track Grand Slam Architecture: PS-01 (Bifrost) &bull; PS-06 (Tavily) &bull; Omnidimension &bull; Pathway**
 
 [![Track](https://img.shields.io/badge/Track-PS--01_Bifrost_+_PS--06_Tavily_Dual--Stack-7928CA.svg?style=for-the-badge)](https://github.com)
-[![Tests](https://img.shields.io/badge/Tests-28%2F28_Passing-10b981.svg?style=for-the-badge)](https://github.com)
+[![Tests](https://img.shields.io/badge/Tests-35%2F35_Passing-10b981.svg?style=for-the-badge)](https://github.com)
 [![Token Reduction](https://img.shields.io/badge/AST_Compression--84.2%25_Tokens-d946ef.svg?style=for-the-badge)](https://github.com)
 [![Failover](https://img.shields.io/badge/Circuit_Breaker-%3C180ms_Failover-06b6d4.svg?style=for-the-badge)](https://github.com)
 [![Privacy Lock](https://img.shields.io/badge/AirGap_Lock-Zero_WAN_Egress-ef4444.svg?style=for-the-badge)](https://github.com)
@@ -258,6 +258,7 @@ aegis-zero/
 ├── orchestrator/                    # FastAPI Master Backend Engine
 │   ├── main.py                      # REST Endpoints, WebSocket Hub, Red-Team Gate
 │   ├── ast_pruner.py                # Submodular AST Knapsack & 1-Line Stub Engine
+│   ├── pathway_stream.py            # Pathway Streaming AST Indexer & Reactive Delta Engine
 │   ├── budget_ledger.py             # Pre-Flight Token Cost Bounds & Hard-Halt Machine
 │   ├── bifrost_client.py            # Gateway Client with <180ms Circuit Breakers
 │   ├── schemas.py                   # Pydantic v2 Domain Models & Tiers
@@ -272,11 +273,14 @@ aegis-zero/
 │   ├── src/app/workbench/page.tsx   # 3-Stage Zero-Scroll 100vh Mission Control + Live Command Bar
 │   ├── src/components/              # Panel1 (AST), Panel2 (Budget), Panel3 (Tavily), Panel4 (Voice)
 │   └── src/hooks/useOrchestrator.ts # WebSocket Hook & Live Dogfooding Runner
-├── tests/                           # 28-Test Automated Pytest Suite
+├── scripts/                         # Build & Presentation Automation
+│   └── build_pitch_deck.py          # 16:9 Widescreen Pitch Deck Generator
+├── tests/                           # 35-Test Automated Pytest Suite
 │   ├── test_phase1_core.py          # 6 Core Architectural Unit Tests
 │   ├── test_phase2_integration.py   # 8 Full-Pipeline & WebSocket Integration Tests
 │   ├── test_phase3_redteam.py       # 6 Adversarial Red-Team & Live Dogfooding Tests
-│   └── test_phase4_hardening.py     # 8 Deep-Tech Hardening, Edge-Case & Audit Ledger Tests
+│   ├── test_phase4_hardening.py     # 8 Deep-Tech Hardening, Edge-Case & Audit Ledger Tests
+│   └── test_phase5_adjudicator.py   # 7 Multi-Session, Streaming & Multi-SDK Hardening Tests
 └── docs/                            # Competition Deliverables
     ├── AEGIS_0_Pitch_Deck.pdf       # Mandatory 8-Slide Widescreen (16:9) Presentation PDF
     └── DEMO_SCRIPT.md               # 180-Second Timestamped Video Walkthrough Script
@@ -341,16 +345,25 @@ python aegis_cli.py "Audit orchestrator token efficiency" --repo ./orchestrator 
 
 # 3. Target Security Gate with Automated Cryptographic Approval
 python aegis_cli.py "Harden Shannon entropy regex" --repo ./security-gate --yes
+
+# 4. Run Mathematical Context Pruning Benchmarks across all modules
+python aegis_cli.py --benchmark
+
+# 5. Export Cryptographic SHA-256 Tamper-Evident Audit Ledger
+python aegis_cli.py --audit-export
+
+# 6. Execute Atomic Rollback of quarantined action & verify chain integrity
+python aegis_cli.py --rollback
 ```
 
 ---
 
 ## 9. Verification & Test Suite
 
-AEGIS-0 includes a comprehensive 28-test test suite spanning core unit tests, full integration flows, adversarial red-team simulations, and deep-tech edge-case hardening:
+AEGIS-0 includes a comprehensive 35-test test suite spanning core unit tests, full integration flows, adversarial red-team simulations, deep-tech edge-case hardening, and adjudicator stress tests:
 
 ```bash
-# Run all 28 tests with full verbosity
+# Run all 35 tests with full verbosity
 .venv\Scripts\python.exe -m pytest tests/ -v
 ```
 
@@ -384,8 +397,15 @@ tests/test_phase4_hardening.py::test_privacy_guard_unicode_zero_width_injection_
 tests/test_phase4_hardening.py::test_audit_ledger_hash_chain_and_tamper_detection PASSED
 tests/test_phase4_hardening.py::test_api_audit_export_and_rollback_lifecycle PASSED
 tests/test_phase4_hardening.py::test_redteam_obfuscated_vectors_api PASSED
+tests/test_phase5_adjudicator.py::test_multi_session_budget_isolation PASSED
+tests/test_phase5_adjudicator.py::test_pathway_streaming_ast_cache_and_delta_update PASSED
+tests/test_phase5_adjudicator.py::test_tavily_multi_library_simultaneous_autopatch PASSED
+tests/test_phase5_adjudicator.py::test_bifrost_circuit_breaker_multi_model_failover_resilience PASSED
+tests/test_phase5_adjudicator.py::test_audit_ledger_merkle_continuity_post_rollback PASSED
+tests/test_phase5_adjudicator.py::test_cli_benchmark_and_audit_modes PASSED
+tests/test_phase5_adjudicator.py::test_streaming_index_api_endpoint PASSED
 
-======================== 28 passed in 2.39s ========================
+======================== 35 passed in 4.49s ========================
 ```
 
 ---
