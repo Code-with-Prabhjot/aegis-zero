@@ -145,3 +145,16 @@ def test_parse_dependency_pins(tmp_path):
     assert pins["pydantic"] == "2.7"
     assert pins["httpx"] == "0.27"
     assert "requests" not in pins
+
+
+def test_parse_dependency_pins_regex_fallback_without_tomllib(monkeypatch, tmp_path):
+    import package_metadata
+    monkeypatch.setattr(package_metadata, "tomllib", None)
+    sub = tmp_path / "service"
+    sub.mkdir()
+    (sub / "pyproject.toml").write_text(
+        '[project]\nname = "x"\ndependencies = ["pydantic~=2.7", "httpx>=0.27"]\n', encoding="utf-8"
+    )
+    pins = parse_dependency_pins(str(tmp_path))
+    assert pins["pydantic"] == "2.7"
+    assert pins["httpx"] == "0.27"

@@ -24,7 +24,10 @@ import httpx
 try:  # Python 3.11+
     import tomllib
 except ModuleNotFoundError:  # pragma: no cover
-    tomllib = None
+    try:
+        import tomli as tomllib  # type: ignore
+    except ModuleNotFoundError:
+        tomllib = None
 
 # Import name -> PyPI distribution name, where they differ.
 IMPORT_TO_DISTRIBUTION: Dict[str, str] = {
@@ -82,16 +85,32 @@ def parse_dependency_pins(repo_dir: Optional[str]) -> Dict[str, str]:
                         m = _REQ_LINE.match(line.split("#", 1)[0])
                         if m:
                             pins.setdefault(normalize(m.group(1)), m.group(3))
-            elif fname == "pyproject.toml" and tomllib is not None:
-                try:
-                    with open(path, "rb") as fh:
-                        data = tomllib.load(fh)
-                except Exception:
-                    continue
-                for dep in data.get("project", {}).get("dependencies", []) or []:
-                    m = _REQ_LINE.match(dep)
-                    if m:
-                        pins.setdefault(normalize(m.group(1)), m.group(3))
+            elif fname == "pyproject.toml":
+                parsed = False
+                if tomllib is not None:
+                    try:
+                        with open(path, "rb") as fh:
+                            data = tomllib.load(fh)
+                        for dep in data.get("project", {}).get("dependencies", []) or []:
+                            m = _REQ_LINE.match(dep)
+                            if m:
+                                pins.setdefault(normalize(m.group(1)), m.group(3))
+                        parsed = True
+                    except Exception:
+                        parsed = False
+                if not parsed:
+                    # Regex fallback for Python 3.10 when tomllib is unavailable
+                    try:
+                        with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+                            content = fh.read()
+                        dep_match = re.search(r"dependencies\s*=\s*\[(.*?)\]", content, re.DOTALL)
+                        if dep_match:
+                            for raw in re.findall(r'["\']([^"\']+)["\']', dep_match.group(1)):
+                                m = _REQ_LINE.match(raw)
+                                if m:
+                                    pins.setdefault(normalize(m.group(1)), m.group(3))
+                    except Exception:
+                        pass
     return pins
 
 

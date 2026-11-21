@@ -409,12 +409,18 @@ class ASTPruner:
             args_str = ast.unparse(node.args)
             return_str = f" -> {ast.unparse(node.returns)}" if node.returns else ""
 
+            type_params = getattr(node, "type_params", [])
+            type_params_str = f"[{', '.join(ast.unparse(p) for p in type_params)}]" if type_params else ""
+
             # Preserve decorators (e.g. @classmethod, @staticmethod)
             dec_str = "".join(f"@{ast.unparse(d)}\n" for d in node.decorator_list)
 
-            return f"{dec_str}{async_prefix}def {node.name}({args_str}){return_str}: ..."
+            return f"{dec_str}{async_prefix}def {node.name}{type_params_str}({args_str}){return_str}: ..."
 
         elif isinstance(node, ast.ClassDef):
+            type_params = getattr(node, "type_params", [])
+            type_params_str = f"[{', '.join(ast.unparse(p) for p in type_params)}]" if type_params else ""
+
             # Class definition header
             bases_str = f"({', '.join(ast.unparse(b) for b in node.bases)})" if node.bases else ""
             dec_str = "".join(f"@{ast.unparse(d)}\n" for d in node.decorator_list)
@@ -548,9 +554,11 @@ class ASTPruner:
 
         # Stub: decorators + class line + first docstring line (+ `...` if no methods follow).
         dec_str = "".join(f"@{ast.unparse(d)}\n" for d in stmt.decorator_list)
+        type_params = getattr(stmt, "type_params", [])
+        type_params_str = f"[{', '.join(ast.unparse(p) for p in type_params)}]" if type_params else ""
         bases = [ast.unparse(b) for b in stmt.bases] + [ast.unparse(k) for k in stmt.keywords]
         bases_str = f"({', '.join(bases)})" if bases else ""
-        header_line = f"class {stmt.name}{bases_str}:"
+        header_line = f"class {stmt.name}{type_params_str}{bases_str}:"
         saved = max(0, self.count_tokens(class_raw) - self.count_tokens(header_line))
         stub = f"{dec_str}{header_line}  # [AST-STUB: {saved} tokens saved]"
         docstring = ast.get_docstring(stmt)

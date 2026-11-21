@@ -6,7 +6,7 @@
 
 [![Track](https://img.shields.io/badge/Track-PS--01_Bifrost_+_PS--06_Tavily_Dual--Stack-7928CA.svg?style=for-the-badge)](https://hackculture.io/hackathons/ai-global-hackathon)
 [![CI](https://github.com/Code-with-Prabhjot/aegis-zero/actions/workflows/ci.yml/badge.svg)](https://github.com/Code-with-Prabhjot/aegis-zero/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/Tests-108%2F108_Passing-10b981.svg?style=for-the-badge)](https://github.com)
+[![Tests](https://img.shields.io/badge/Tests-109%2F109_Passing-10b981.svg?style=for-the-badge)](https://github.com)
 [![Token Reduction](https://img.shields.io/badge/AST_Compression--74.3%25_Tokens_%C2%B7_92.9%25_Recall-d946ef.svg?style=for-the-badge)](#5-empirical-benchmarks)
 [![Failover](https://img.shields.io/badge/Circuit_Breaker-%3C180ms_Failover-06b6d4.svg?style=for-the-badge)](https://github.com)
 [![Privacy Lock](https://img.shields.io/badge/AirGap_Lock-Zero_WAN_Egress-ef4444.svg?style=for-the-badge)](https://github.com)
@@ -18,9 +18,12 @@
 
 **Built by Team PS &bull; MK &bull; RRS &bull; MB**
 
-[Live Mission Control UI](http://localhost:3000/workbench) &bull; [FastAPI Swagger Specs](http://localhost:8000/docs) &bull; [8-Slide Pitch Deck (PDF)](docs/AEGIS_0_Pitch_Deck.pdf) &bull; [Demo Script](docs/DEMO_SCRIPT.md) &bull; [Official Final Google Form](https://forms.gle/8fafao1ymEpihgKd9) &bull; [Bifrost Repo (Star ⭐)](https://github.com/maximhq/bifrost)
+[**Submission Handoff Guide**](docs/SUBMISSION_HANDOFF.md) &bull; [Live Mission Control UI](http://localhost:3000/workbench) &bull; [FastAPI Swagger Specs](http://localhost:8000/docs) &bull; [8-Slide Pitch Deck (PDF)](docs/AEGIS_0_Pitch_Deck.pdf) &bull; [Demo Script](docs/DEMO_SCRIPT.md) &bull; [Official Final Google Form](https://forms.gle/8fafao1ymEpihgKd9) &bull; [Bifrost Repo (Star ⭐)](https://github.com/maximhq/bifrost)
 
 </div>
+
+> [!IMPORTANT]
+> **Submission Readiness & Team Handoff:** Complete pre-submission checklist gates, 3-minute demo video recording cue sheet, and exact copy-paste form fields for both mandatory portals are ready in [`docs/SUBMISSION_HANDOFF.md`](docs/SUBMISSION_HANDOFF.md).
 
 ---
 

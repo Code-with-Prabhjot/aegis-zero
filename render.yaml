@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: aegis-zero-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r orchestrator/requirements.txt
+    startCommand: PYTHONPATH=. uvicorn orchestrator.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: BIFROST_MOCK
+        value: "true"
+      - key: AEGIS_HMAC_SECRET
+        generateValue: true

@@ -151,8 +151,23 @@ def test_cors_only_allows_configured_origins():
         headers={"Origin": "http://localhost:3000", "Access-Control-Request-Method": "GET"},
     )
     assert allowed.headers.get("access-control-allow-origin") == "http://localhost:3000"
+    vercel = client.options(
+        "/api/telemetry",
+        headers={"Origin": "https://aegis-zero-mission-control.vercel.app", "Access-Control-Request-Method": "GET"},
+    )
+    assert vercel.headers.get("access-control-allow-origin") == "https://aegis-zero-mission-control.vercel.app"
     evil = client.options(
         "/api/action/approve",
         headers={"Origin": "https://evil.example", "Access-Control-Request-Method": "POST"},
     )
     assert evil.headers.get("access-control-allow-origin") is None
+
+
+def test_root_endpoint_status():
+    client = TestClient(app)
+    res = client.get("/")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["service"] == "aegis-zero-orchestrator"
+    assert data["status"] == "online"
+    assert data["docs"] == "/docs"

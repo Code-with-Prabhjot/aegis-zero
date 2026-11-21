@@ -90,17 +90,18 @@ app = FastAPI(
 
 # Enable CORS for the Next.js Mission Control Workbench. A wildcard origin with
 # credentials would let any site drive the action gate from a user's browser,
-# so allowed origins are explicit (comma-separated AEGIS_CORS_ORIGINS).
+# so allowed origins are explicit (comma-separated CORS_ORIGINS / AEGIS_CORS_ORIGINS)
+# with regex support for Vercel production/preview and local dev URLs.
+raw_cors = os.getenv("CORS_ORIGINS") or os.getenv("AEGIS_CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
 CORS_ORIGINS = [
     o.strip()
-    for o in os.getenv(
-        "AEGIS_CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"
-    ).split(",")
+    for o in raw_cors.split(",")
     if o.strip()
 ]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
+    allow_origin_regex=r"https://.*\.vercel\.app|http://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -161,6 +162,18 @@ consumed_action_ids: set = set()
 # Writes actually applied to the workspace, for byte-exact rollback:
 # action_id -> {"target_path", "original", "patched_digest"}
 applied_writes: Dict[str, Dict[str, Any]] = {}
+
+
+@app.get("/")
+async def root():
+    """
+    Root status endpoint for cloud hosting readiness.
+    """
+    return {
+        "service": "aegis-zero-orchestrator",
+        "status": "online",
+        "docs": "/docs",
+    }
 
 
 @app.get("/healthz")
