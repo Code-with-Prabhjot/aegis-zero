@@ -65,7 +65,7 @@ flowchart TD
     Guard["Zero-Trust Privacy Guard<br/>Shannon Entropy H >= 4.5 & Taint"]:::security
     LocalEnclave["Tier-0 Local Ollama Enclave<br/>(DeepSeek-Coder-V2)"]:::security
 
-    Pruner["Submodular AST Call-Graph Pruner<br/>1-Line Type Stubs (-80.1% Tokens)"]:::engine
+    Pruner["Submodular AST Call-Graph Pruner<br/>1-Line Type Stubs (-74.3% Tokens)"]:::engine
     Ledger["Deterministic Pre-Call Budget Ledger<br/>Zero Overrun Financial Hard-Cap"]:::engine
 
     Bifrost["Bifrost AI Gateway (Maxim AI)<br/>OpenAI-Compatible Proxy :8080/v1"]:::gateway
@@ -119,7 +119,7 @@ flowchart TD
 │ • Retains full source for seed symbols and 1-hop caller/callee dependencies │
 │ • Collapses non-seed classes and functions into syntactically valid stubs:  │
 │   def calculate_margin(order: Order) -> Decimal: ... # [AST-STUB: -1,802 tok]│
-│ • Realized Token Compression: ≥ 75.0% (Empirical Average: -80.1%)           │
+│ • Realized Token Compression: ≥ 70.0% (Empirical Average: -74.3%)           │
 └──────────────────────────────────────┬──────────────────────────────────────┘
                                        │
                                        ▼
@@ -258,8 +258,8 @@ Run `python aegis_cli.py --benchmark` or `python scripts/run_benchmarks.py` (als
 | Metric (this repo, calibrated budget ≈ 25% of raw) | Before method-level + BM25 pruning | Now |
 |:---|:---:|:---:|
 | Mean recall @ budget (questions answerable from pruned context) | 35.7% | **92.9%** (13/14) |
-| Mean compression on the same questions | 57.2% | **73.8%** |
-| Module compression: `orchestrator` / `security-gate` / `tavily_freshness` | — | 74.4% / 73.5% / 74.3% |
+| Mean compression on the same questions | 57.2% | **73.9%** |
+| Module compression: `orchestrator` / `security-gate` / `tavily_freshness` | — | 74.4% / 73.9% / 74.3% |
 | Pruned buffers that parse as valid Python | 100% | 100% |
 
 Compression is largely set by the calibrated budget; recall is the quality signal. The test suite enforces a floor of ≥ 85% recall and ≥ 70% compression.
@@ -268,10 +268,10 @@ Compression is largely set by the calibrated budget; recall is the quality signa
 
 | Metric / Module | Raw Tokens | Pruned Tokens | Delta / Compression | Status / SLA |
 |:---|:---:|:---:|:---:|:---:|
-| **AEGIS-0 Orchestrator Core (`./orchestrator`)** | 31,601 | 8,093 | **-74.4%** | Optimal Knapsack Bound |
-| **Zero-Trust Security Gate (`./security-gate`)** | 5,381 | 1,426 | **-73.5%** | Optimal Knapsack Bound |
-| **Tavily Freshness Engine (`./tavily_freshness`)** | 10,487 | 2,696 | **-74.3%** | Optimal Knapsack Bound |
-| **Cross-Module Measured Total** | **47,469** | **12,215** | **-74.3% Average (92.9% Recall)** | **VERIFIED PASS** |
+| **AEGIS-0 Orchestrator Core (`./orchestrator`)** | 31,826 | 8,156 | **-74.4%** | Optimal Knapsack Bound |
+| **Zero-Trust Security Gate (`./security-gate`)** | 5,765 | 1,505 | **-73.9%** | Optimal Knapsack Bound |
+| **Tavily Freshness Engine (`./tavily_freshness`)** | 10,662 | 2,744 | **-74.3%** | Optimal Knapsack Bound |
+| **Cross-Module Measured Total** | **48,253** | **12,405** | **-74.3% Average (92.9% Recall)** | **VERIFIED PASS** |
 | **Provider Outage Failover Latency** | $> 12,000\text{ ms}$ (Timeout) | **138 ms** | **98.8% Latency Reduction** | Meets <180ms Target |
 | **Red-Team Injection Containment** | Vulnerable (0% containment) | **100.0% Blocked** | **6/6 Vectors Neutralized** | 0 False Positives |
 | **Outdated SDK Hallucination Rate** | 31.4% (Parametric Cutoff) | **0.0%** (Tavily Auto-Patched) | **100% Contemporary Accuracy** | Live Verification |

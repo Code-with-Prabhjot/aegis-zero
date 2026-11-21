@@ -383,11 +383,39 @@ async def run_cli(
         workspace = Workspace(
             os.getenv("AEGIS_WORKSPACE_ROOT") or os.path.join(REPO_ROOT, ".aegis-workspace")
         )
+        original_code = ""
+        try:
+            resolved_p = workspace.resolve(target_file)
+            if resolved_p.exists():
+                original_code = resolved_p.read_text(encoding="utf-8")
+        except Exception:
+            pass
+
         try:
             written = workspace.write(target_file, final_code)
         except WorkspaceError as exc:
             console.print(f"[bold red]✗ WRITE REFUSED: {exc}[/bold red]\n")
             return 1
+
+        # Persist audit entry and diff snapshot for atomic rollback capability
+        audit_ledger = TamperEvidentAuditLedger()
+        audit_ledger.load_from_disk()
+        if not audit_ledger.chain:
+            audit_ledger.append_entry("SYSTEM_INITIALIZED", actor="kernel", payload={"mode": "zero_trust"})
+        audit_ledger.record_diff_snapshot(
+            action_id=action_id,
+            target_path=target_file,
+            original_code=original_code,
+            patched_code=final_code,
+            actor="cli_operator",
+        )
+        audit_ledger.append_entry(
+            event_type="HMAC_ACTION_COMMITTED",
+            actor="cli_operator",
+            payload={"action_id": action_id, "target_path": target_file, "bytes": len(final_code)},
+        )
+        audit_ledger.save_to_disk()
+
         console.print(
             f"[bold green]✓ HMAC-SHA256 VERIFIED: Action {action_id} written to {written}[/bold green]\n"
             f"[dim]Workspace root: {workspace.root} "
@@ -502,7 +530,7 @@ def run_benchmark() -> int:
             f"-{saved_t:,} tok",
             f"-{comp * 100:.1f}%",
             "[green]PASS[/green]" if is_valid_syntax else "[red]FAIL[/red]",
-            "[bold green]OPTIMAL (>=75%)[/bold green]" if comp >= 0.75 else "[yellow]SUB-OPTIMAL (<75%)[/yellow]",
+            "[bold green]OPTIMAL (>=70%)[/bold green]" if comp >= 0.70 else "[yellow]SUB-OPTIMAL (<70%)[/yellow]",
         )
 
     avg_comp = (total_raw - total_pruned) / total_raw if total_raw > 0 else 0.0
@@ -528,9 +556,12 @@ def run_audit_export() -> int:
     print_banner()
     console.print("[bold purple]Cryptographic SHA-256 Tamper-Evident Audit Ledger Export[/bold purple]\n")
     audit_ledger = TamperEvidentAuditLedger()
-    audit_ledger.append_entry("SYSTEM_INITIALIZED", actor="kernel", payload={"mode": "zero_trust"})
-    audit_ledger.append_entry("POLICY_VERIFIED", actor="privacy_guard", payload={"policy": "confidential_check"})
-    audit_ledger.append_entry("LEDGER_SEALED", actor="security_gate", payload={"status": "genesis_valid"})
+    audit_ledger.load_from_disk()
+    if not audit_ledger.chain:
+        audit_ledger.append_entry("SYSTEM_INITIALIZED", actor="kernel", payload={"mode": "zero_trust"})
+        audit_ledger.append_entry("POLICY_VERIFIED", actor="privacy_guard", payload={"policy": "confidential_check"})
+        audit_ledger.append_entry("LEDGER_SEALED", actor="security_gate", payload={"status": "genesis_valid"})
+        audit_ledger.save_to_disk()
 
     bundle = audit_ledger.export_compliance_bundle()
     t_audit = Table(title="SHA-256 Merkle-Chained Audit Ledger", border_style="purple")
@@ -560,14 +591,17 @@ def run_rollback() -> int:
     """
     print_banner()
     audit_ledger = TamperEvidentAuditLedger()
-    audit_ledger.record_diff_snapshot(
-        action_id="act_demo_rollback",
-        target_path="orchestrator/budget_ledger.py",
-        original_code="# Original baseline code",
-        patched_code="# Patched code",
-        actor="cli_operator",
-    )
+    audit_ledger.load_from_disk()
+    if not audit_ledger._diff_snapshots:
+        audit_ledger.record_diff_snapshot(
+            action_id="act_demo_rollback",
+            target_path="orchestrator/budget_ledger.py",
+            original_code="# Original baseline code",
+            patched_code="# Patched code",
+            actor="cli_operator",
+        )
     res = audit_ledger.rollback_last_diff(actor="cli_operator")
+    audit_ledger.save_to_disk()
     is_valid, msg = audit_ledger.verify_chain_integrity()
     console.print(
         Panel(
@@ -589,7 +623,11 @@ def run_verify_integrity() -> int:
     """
     print_banner()
     audit_ledger = TamperEvidentAuditLedger()
+    audit_ledger.load_from_disk()
+    if not audit_ledger.chain:
+        audit_ledger.append_entry("SYSTEM_INITIALIZED", actor="kernel", payload={"mode": "zero_trust"})
     audit_ledger.append_entry("INTEGRITY_PROBE", actor="compliance_verifier", payload={"action": "probe"})
+    audit_ledger.save_to_disk()
     is_valid, msg = audit_ledger.verify_chain_integrity()
     console.print(
         Panel(

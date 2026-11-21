@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { ASTGraphNode } from "@/types";
 import { GitBranch, Layers, Code2, ShieldCheck, Search, ZoomIn, ZoomOut, RotateCcw } from "lucide-react";
 
@@ -31,6 +31,16 @@ export function Panel1_ASTGraph({
   const [dragStart, setDragStart] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
   const selectedNode = nodes.find((n) => n.id === selectedNodeId) || nodes[0];
+
+  // Auto-select first active (S*) node or nodes[0] when nodes array changes and selectedNodeId is missing
+  useEffect(() => {
+    if (nodes.length === 0) return;
+    const exists = nodes.some((n) => n.id === selectedNodeId);
+    if (!exists) {
+      const firstSelected = nodes.find((n) => n.selected);
+      setSelectedNodeId(firstSelected ? firstSelected.id : nodes[0].id);
+    }
+  }, [nodes, selectedNodeId]);
 
   const handleMouseDown = (e: React.MouseEvent) => {
     // Only pan on left-click on the canvas background
@@ -468,7 +478,16 @@ export function Panel1_ASTGraph({
 
         {/* RIGHT COLUMN: 40% -> Spacious Symbol Inspector */}
         <div className="lg:col-span-5 flex flex-col h-full min-h-0 bg-[#0b0618]/90 overflow-hidden p-4 space-y-3">
-          {/* Header */}
+          {!selectedNode ? (
+            <div className="flex flex-col items-center justify-center h-full text-center p-6 space-y-3">
+              <Code2 className="w-8 h-8 text-purple-400/40" />
+              <p className="text-xs font-mono text-purple-300/60">
+                No AST symbols indexed yet — run an agent task above.
+              </p>
+            </div>
+          ) : (
+            <>
+              {/* Header */}
           <div className="flex items-center justify-between pb-2.5 border-b border-purple-500/20">
             <div className="flex items-center gap-2">
               <Code2 className="w-4 h-4 text-cosmicFuchsia" />
@@ -629,6 +648,8 @@ export function Panel1_ASTGraph({
                 {selectedNode.selected ? "High-Relevance Core" : "Type Signature Preserved"}
               </span>
             </div>
+          )}
+            </>
           )}
         </div>
       </div>

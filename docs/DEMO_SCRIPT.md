@@ -26,7 +26,7 @@
   >
   > *In Stage 01, AEGIS-0 doesn’t dump dumb text files into LLM context. Instead, it extracts the AST call-graph and solves a budgeted submodular knapsack problem: promoting seed symbols and caller/callee dependencies into full context, while collapsing unselected classes and methods into 1-line type-safe stubs.*
   >
-  > *Look at the telemetry: our raw repository modules are compressed down from 47,469 tokens to 12,215 tokens—a **74.3% average token reduction** (-74.4% on orchestrator, -74.3% on Tavily freshness) with **92.9% retrieval recall @ budget**, while remaining 100% syntactically valid Python code."*
+  > *Look at the telemetry: our raw repository modules are compressed down from 48,253 tokens to 12,405 tokens—a **74.3% average token reduction** (-74.4% on orchestrator, -74.3% on Tavily freshness, -73.9% on security-gate) with **92.9% retrieval recall @ budget**, while remaining 100% syntactically valid Python code."*
 - **Action**: Click **`[Run Live Agent]`**. Point cursor at Stage 01 flamegraph and AST node inspector showing 1-line stubs. Press `2` to toggle to Stage 02.
 
 ---
@@ -65,7 +65,7 @@
   >
   > *Operators review the color-coded Monaco side-by-side diff and authorize deployment vocally via our Omnidimension Voice AI gate: 'Approve Alpha-7'. The cryptographic hash verifies and the patch is safely committed to main.*
   >
-  > *The exact same pipeline runs via our standalone Terminal CLI Agent: `python aegis_cli.py`. With 108 passing tests, a 74.3% average token reduction (92.9% recall @ budget), and dual-track sponsor integration across Bifrost, Tavily, Omnidimension, and Pathway, AEGIS-0 delivers the enterprise gold standard for autonomous coding. Thank you."*
+  > *The exact same pipeline runs via our standalone Terminal CLI Agent: `python aegis_cli.py`. With 110 passing tests, a 74.3% average token reduction (92.9% recall @ budget), and dual-track sponsor integration across Bifrost, Tavily, Omnidimension, and Pathway, AEGIS-0 delivers the enterprise gold standard for autonomous coding. Thank you."*
 - **Action**: Click **`[Voice Confirm: "Approve Alpha-7"]`** $\to$ Monaco editor flashes verified green $\to$ Show Terminal window running `python aegis_cli.py --dry-run` with passing tables $\to$ Fade to final title slide.
 
 ---

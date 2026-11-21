@@ -58,6 +58,20 @@ export function Panel4_MonacoVoiceGate({
 
   // Ref to hold the mounted Monaco DiffEditor instance
   const diffEditorRef = useRef<any>(null);
+  const recognitionRef = useRef<any>(null);
+
+  // Reset voice approval state whenever a new quarantined action arrives
+  useEffect(() => {
+    setVoiceApproved(false);
+    setIsListening(false);
+    setSpeechTranscript("");
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch {}
+      recognitionRef.current = null;
+    }
+  }, [quarantinedAction?.action_id]);
 
   // Safely reset DiffEditor model on unmount to prevent TextModel disposed error
   useEffect(() => {
@@ -66,6 +80,11 @@ export function Panel4_MonacoVoiceGate({
         diffEditorRef.current?.setModel(null);
       } catch {
         // Safe disposal fallback
+      }
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch {}
       }
     };
   }, []);
@@ -122,12 +141,19 @@ export function Panel4_MonacoVoiceGate({
     });
   };
 
-  // Web Speech API Voice Approval Gate with Fallback
+  // Web Speech API Voice Approval Gate with Fail-Closed Security
   const handleToggleVoice = () => {
     if (voiceApproved || !quarantinedAction) return;
 
     if (isListening) {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch {}
+        recognitionRef.current = null;
+      }
       setIsListening(false);
+      setSpeechTranscript("Voice gate paused. Click Voice Sign-Off to re-arm.");
       return;
     }
 
@@ -139,6 +165,7 @@ export function Panel4_MonacoVoiceGate({
     if (SpeechRecognition) {
       try {
         const recognition = new SpeechRecognition();
+        recognitionRef.current = recognition;
         recognition.continuous = false;
         recognition.interimResults = true;
         recognition.lang = "en-US";
@@ -171,6 +198,7 @@ export function Panel4_MonacoVoiceGate({
             try {
               recognition.stop();
             } catch {}
+            recognitionRef.current = null;
             onApproveAction(
               quarantinedAction.action_id,
               quarantinedAction.hmac_token,
@@ -182,21 +210,16 @@ export function Panel4_MonacoVoiceGate({
         recognition.onerror = (event: any) => {
           console.warn("SpeechRecognition error:", event.error);
           setIsListening(false);
-          // Fallback to simulated approval if mic permission blocked
-          setSpeechTranscript("Mic unavailable. Triggering acoustic fallback...");
-          setTimeout(() => {
-            setSpeechTranscript("Acoustic token matched [CONFIDENCE: 95% - VERIFIED]");
-            setVoiceApproved(true);
-            onApproveAction(
-              quarantinedAction.action_id,
-              quarantinedAction.hmac_token,
-              quarantinedAction.signed_payload
-            );
-          }, 800);
+          recognitionRef.current = null;
+          // Fail-closed security: never auto-approve on error or permission denial
+          setSpeechTranscript(
+            "Microphone unavailable or denied — Action remains QUARANTINED. Use explicit [Approve & Commit] below."
+          );
         };
 
         recognition.onend = () => {
           setIsListening(false);
+          recognitionRef.current = null;
         };
 
         recognition.start();
@@ -206,19 +229,12 @@ export function Panel4_MonacoVoiceGate({
       }
     }
 
-    // Interactive fallback when Web Speech API is unsupported in current environment
-    setIsListening(true);
-    setSpeechTranscript("Acoustic listener active... Say 'Approve Alpha-7'");
-    setTimeout(() => {
-      setSpeechTranscript("Transcribed: 'Approve Alpha-7' [CONFIDENCE: 98% - VERIFIED]");
-      setIsListening(false);
-      setVoiceApproved(true);
-      onApproveAction(
-        quarantinedAction.action_id,
-        quarantinedAction.hmac_token,
-        quarantinedAction.signed_payload
-      );
-    }, 1200);
+    // Fail-closed fallback when Web Speech API is unsupported
+    setIsListening(false);
+    recognitionRef.current = null;
+    setSpeechTranscript(
+      "Microphone unavailable or denied — Action remains QUARANTINED. Use explicit [Approve & Commit] below."
+    );
   };
 
   const isQuarantined =

@@ -647,6 +647,7 @@ export function useOrchestrator() {
             repo_path: repoPath,
             proposed_action: "write_file",
             proposed_target: "orchestrator/budget_ledger.py",
+            budget_limit_usd: telemetry.userLimitUsd,
           }),
         });
 
@@ -657,18 +658,56 @@ export function useOrchestrator() {
         const data = await response.json();
         if (data.run_id) setLastRunId(data.run_id);
 
-        // Map live AST nodes to visualization graph
+        const isHalted = data.status === "HALTED";
+        const haltReason = isHalted
+          ? data.halt_reason || data.recovery_checkpoint?.reason || "Session budget cap reached"
+          : undefined;
+
+        // Map live AST nodes to visualization graph: filter out imports and trivial statement nodes
         let convertedNodes: ASTGraphNode[] = [];
         if (data.ast_nodes && data.ast_nodes.length > 0) {
-          convertedNodes = data.ast_nodes.slice(0, 16).map((node: any, idx: number) => {
+          let candidates = data.ast_nodes.filter(
+            (n: any) =>
+              n.node_type !== "import" &&
+              n.node_type !== "statement" &&
+              !String(n.name).startsWith("stmt_")
+          );
+          if (candidates.length === 0) {
+            candidates = data.ast_nodes;
+          }
+
+          // Prioritize selected (S*) functions/classes first, then stubs by raw_tokens
+          candidates.sort((a: any, b: any) => {
+            if (a.is_selected && !b.is_selected) return -1;
+            if (!a.is_selected && b.is_selected) return 1;
+            return (b.raw_tokens || 0) - (a.raw_tokens || 0);
+          });
+
+          const slicedNodes = candidates.slice(0, 16);
+          const nodeIdSet = new Set(
+            slicedNodes.map((n: any) => `n_${String(n.name).replace(/[^a-zA-Z0-9_]/g, "_")}`)
+          );
+
+          convertedNodes = slicedNodes.map((node: any, idx: number) => {
             const col = idx % 5;
             const row = Math.floor(idx / 5);
             const x = 90 + col * 170;
             const y = 80 + row * 115 + (col % 2 === 1 ? 25 : 0);
-            const nextIdx = (idx + 1) % Math.min(data.ast_nodes.length, 16);
-            const connId = `n_${data.ast_nodes[nextIdx].name.replace(/[^a-zA-Z0-9_]/g, "_")}`;
+            const nodeId = `n_${String(node.name).replace(/[^a-zA-Z0-9_]/g, "_")}`;
+
+            // Map authentic dependencies to internal slice IDs
+            const connections: string[] = [];
+            if (Array.isArray(node.dependencies)) {
+              for (const dep of node.dependencies) {
+                const targetId = `n_${String(dep).replace(/[^a-zA-Z0-9_]/g, "_")}`;
+                if (nodeIdSet.has(targetId) && targetId !== nodeId && !connections.includes(targetId)) {
+                  connections.push(targetId);
+                }
+              }
+            }
+
             return {
-              id: `n_${node.name.replace(/[^a-zA-Z0-9_]/g, "_")}`,
+              id: nodeId,
               name: node.name,
               type: (node.node_type === "class"
                 ? "class"
@@ -685,9 +724,17 @@ export function useOrchestrator() {
               fullCode: node.raw_source || `# Source for ${node.name}`,
               x,
               y,
-              connections: idx % 2 === 0 ? [connId] : [],
+              connections,
             };
           });
+
+          // If subset has zero internal edges, draw minimal sequential fallback edges
+          const totalEdges = convertedNodes.reduce((acc, n) => acc + n.connections.length, 0);
+          if (totalEdges === 0 && convertedNodes.length > 1) {
+            for (let i = 0; i < convertedNodes.length - 1; i += 2) {
+              convertedNodes[i].connections.push(convertedNodes[i + 1].id);
+            }
+          }
         }
 
         // Map live freshness claims
@@ -711,7 +758,7 @@ export function useOrchestrator() {
 
         // Map live quarantined action
         let mappedAction: QuarantinedAction | null = null;
-        if (data.action_quarantine) {
+        if (data.action_quarantine && !isHalted) {
           mappedAction = {
             action_id: data.action_quarantine.action_id,
             category: data.action_quarantine.category,
@@ -729,6 +776,8 @@ export function useOrchestrator() {
 
         setTelemetry((prev) => ({
           ...prev,
+          isHalted,
+          haltReason,
           nodes: convertedNodes.length > 0 ? convertedNodes : prev.nodes,
           rawTotalTokens: data.raw_tokens || prev.rawTotalTokens,
           prunedTotalTokens: data.pruned_tokens || prev.prunedTotalTokens,
@@ -742,12 +791,18 @@ export function useOrchestrator() {
           activeTier: (data.model_tier as ModelTier) || prev.activeTier,
           airGapLock: Boolean(data.airgap_locked),
           claims: mappedClaims.length > 0 ? mappedClaims : prev.claims,
-          quarantinedAction: mappedAction || prev.quarantinedAction,
+          quarantinedAction: isHalted ? null : (mappedAction || prev.quarantinedAction),
         }));
 
-        setFailoverToast(
-          `LIVE AGENT EXECUTION COMPLETE: Parsed ${data.ast_nodes?.length || 63} symbols from ${repoPath}. Saved ${data.tokens_saved || 9951} tokens (${((data.compression_ratio || 0.751) * 100).toFixed(1)}% compression).`
-        );
+        if (isHalted) {
+          setFailoverToast(
+            `HARD-HALT TRIGGERED: Budget ceiling reached (${haltReason}). Zero further tokens spent.`
+          );
+        } else {
+          setFailoverToast(
+            `LIVE AGENT EXECUTION COMPLETE: Parsed ${data.ast_nodes?.length || 63} symbols from ${repoPath}. Saved ${data.tokens_saved || 9951} tokens (${((data.compression_ratio || 0.751) * 100).toFixed(1)}% compression).`
+          );
+        }
       } catch (err) {
         // Offline simulation fallback for dogfooding
         setTelemetry((prev) => ({

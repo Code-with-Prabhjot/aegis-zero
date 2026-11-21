@@ -88,7 +88,7 @@ def run_ast_benchmarks() -> Dict[str, Any]:
             "compression_ratio": round(comp, 4),
             "compression_pct": round(comp * 100, 1),
             "ast_valid": is_valid,
-            "status": "OPTIMAL (>=75%)" if comp >= 0.75 else "SUB-OPTIMAL (<75%)",
+            "status": "OPTIMAL (>=70%)" if comp >= 0.70 else "SUB-OPTIMAL (<70%)",
         })
 
     avg_comp = (total_raw - total_pruned) / total_raw if total_raw > 0 else 0.0

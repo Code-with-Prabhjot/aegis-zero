@@ -119,7 +119,7 @@ export function Header({
                 </span>
 
                 <span
-                  className={`hidden 2xl:flex items-center gap-1 px-2 py-0.5 rounded-full border ${
+                  className={`hidden lg:flex items-center gap-1 px-2 py-0.5 rounded-full border ${
                     isConnected
                       ? "text-emerald-400 border-emerald-700/50 bg-emerald-950/30"
                       : "text-purple-300/60 border-purple-800/40 bg-purple-950/20"

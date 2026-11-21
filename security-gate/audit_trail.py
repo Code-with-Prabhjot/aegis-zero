@@ -8,6 +8,7 @@ Provides full verification of chain continuity from genesis and compliance bundl
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 from typing import List, Dict, Any, Optional, Tuple
 from pydantic import BaseModel, Field
 
@@ -192,3 +193,48 @@ class TamperEvidentAuditLedger:
             "timestamp_utc": datetime.now(timezone.utc).isoformat(),
             "ledger": [entry.model_dump() for entry in self.chain],
         }
+
+    DEFAULT_STORAGE_PATH = os.path.join(".aegis-workspace", "audit_ledger.json")
+
+    def save_to_disk(self, file_path: Optional[str] = None) -> str:
+        """
+        Persists the current audit ledger chain and diff snapshots to disk.
+        """
+        target = file_path or os.getenv("AEGIS_AUDIT_STATE_PATH") or self.DEFAULT_STORAGE_PATH
+        target_dir = os.path.dirname(target)
+        if target_dir:
+            os.makedirs(target_dir, exist_ok=True)
+
+        data = {
+            "version": "2.0",
+            "chain": [entry.model_dump() for entry in self.chain],
+            "diff_snapshots": self._diff_snapshots,
+            "exported_at": datetime.now(timezone.utc).isoformat(),
+        }
+        with open(target, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        return target
+
+    def load_from_disk(self, file_path: Optional[str] = None) -> bool:
+        """
+        Loads the audit ledger chain and diff snapshots from disk if present.
+        Returns True if state was successfully loaded and verified.
+        """
+        target = file_path or os.getenv("AEGIS_AUDIT_STATE_PATH") or self.DEFAULT_STORAGE_PATH
+        if not os.path.exists(target):
+            return False
+
+        try:
+            with open(target, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            raw_chain = data.get("chain", [])
+            entries = [AuditEntry(**e) for e in raw_chain]
+
+            # Reconstruct and verify loaded chain
+            self.chain = entries
+            self._diff_snapshots = data.get("diff_snapshots", [])
+            is_valid, _ = self.verify_chain_integrity()
+            return is_valid
+        except Exception:
+            return False

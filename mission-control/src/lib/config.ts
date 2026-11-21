@@ -5,12 +5,13 @@ export const trimSlash = (url: string) => url.replace(/\/+$/, "");
 
 /** Return normalized HTTP API base URL with trailing slashes stripped. */
 export function getApiBaseUrl(override?: string): string {
-  const raw =
-    override ||
-    process.env.NEXT_PUBLIC_AEGIS_API ||
-    process.env.NEXT_PUBLIC_API_BASE_URL ||
-    "http://localhost:8000";
-  return trimSlash(raw);
+  if (override) return trimSlash(override);
+  const envUrl = process.env.NEXT_PUBLIC_AEGIS_API || process.env.NEXT_PUBLIC_API_BASE_URL;
+  if (envUrl) return trimSlash(envUrl);
+  if (typeof window !== "undefined" && window.location.protocol === "https:") {
+    return "https://aegis-zero.onrender.com";
+  }
+  return "http://localhost:8000";
 }
 
 /** Return normalized WebSocket base URL converting http(s) to ws(s). */

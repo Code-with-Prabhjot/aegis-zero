@@ -1,7 +1,7 @@
 """
 AEGIS-0 Pitch Deck Generator (ReportLab 16:9 Widescreen)
 Generates docs/AEGIS_0_Pitch_Deck.pdf matching the official Geek Room Global AI Hackathon
-100-point rubric, 108/108 test suite count, and Cosmic Violet-Obsidian theme.
+100-point rubric, 110/110 test suite count, and Cosmic Violet-Obsidian theme.
 Strictly Anonymized: Team PS · MK · RRS · MB
 """
 
@@ -412,10 +412,10 @@ def build_deck(output_path: str):
     c.drawRightString(895, 375, "Savings")
 
     bench_data = [
-        ("AEGIS-0 Orchestrator Core", "31,601 tok", "8,093 tok", "-74.4%"),
-        ("Zero-Trust Security Gate", "5,381 tok", "1,426 tok", "-73.5%"),
-        ("Tavily Freshness Engine", "10,487 tok", "2,696 tok", "-74.3%"),
-        ("Cross-Module Verified Average", "47,469 tok", "12,215 tok", "-74.3%"),
+        ("AEGIS-0 Orchestrator Core", "31,826 tok", "8,156 tok", "-74.4%"),
+        ("Zero-Trust Security Gate", "5,765 tok", "1,505 tok", "-73.9%"),
+        ("Tavily Freshness Engine", "10,662 tok", "2,744 tok", "-74.3%"),
+        ("Cross-Module Verified Average", "48,253 tok", "12,405 tok", "-74.3%"),
     ]
     by = 345
     c.setFont("Helvetica", 8.5)
@@ -734,7 +734,7 @@ def build_deck(output_path: str):
 
     rubric_cards = [
         ("1. Technical Execution (25 Pts)", [
-            "• 108 / 108 Automated Pytest Suite Passing (100%)",
+            "• 110 / 110 Automated Pytest Suite Passing (100%)",
             "• Defensive exception handling & graceful syntax fallbacks",
             "• SHA-256 Merkle-chained tamper-evident audit ledger",
             "• Clean modular repo hygiene with strict typing",
