@@ -9,14 +9,17 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
+import logging
 import os
 import sys
 import uuid
 from typing import Dict, List, Optional, Any
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, status
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect, status
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+
+logger = logging.getLogger("orchestrator.main")
 
 # Ensure all subpackages are resolvable on sys.path
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -106,6 +109,21 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    if isinstance(exc, HTTPException):
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": exc.detail},
+            headers=getattr(exc, "headers", None),
+        )
+    logger.error("Unhandled orchestrator exception on %s: %s", request.url.path, exc, exc_info=True)
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"error": "INTERNAL_ORCHESTRATOR_ERROR", "detail": str(exc)},
+    )
 
 
 class TelemetryBroadcaster:
@@ -861,7 +879,7 @@ async def orchestrate(req: OrchestrateRequest):
     # Per-run token receipt (JSON + HTML via /api/receipts/{run_id}).
     tier_pricing = ledger.pricing.get(dispatch_res.tier)
     unpruned_extra = (
-        max(0, raw_tokens - pruned_tokens) * tier_pricing.input_per_mtok / 1_000_000.0
+        max(0, raw_tokens - pruned_tokens - expansion_tokens) * tier_pricing.input_per_mtok / 1_000_000.0
         if tier_pricing else 0.0
     )
     bundle = audit_ledger.export_compliance_bundle()

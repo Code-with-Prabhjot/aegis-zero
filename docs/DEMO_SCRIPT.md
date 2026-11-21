@@ -65,7 +65,7 @@
   >
   > *Operators review the color-coded Monaco side-by-side diff and authorize deployment vocally via our Omnidimension Voice AI gate: 'Approve Alpha-7'. The cryptographic hash verifies and the patch is safely committed to main.*
   >
-  > *The exact same pipeline runs via our standalone Terminal CLI Agent: `python aegis_cli.py`. With 110 passing tests, a 74.3% average token reduction (92.9% recall @ budget), and dual-track sponsor integration across Bifrost, Tavily, Omnidimension, and Pathway, AEGIS-0 delivers the enterprise gold standard for autonomous coding. Thank you."*
+  > *The exact same pipeline runs via our standalone Terminal CLI Agent: `python aegis_cli.py`. With 111 passing tests (100% CI pass rate), a 74.3% average token reduction (92.9% recall @ budget), and dual-track sponsor integration across Bifrost, Tavily, Omnidimension, and Pathway, AEGIS-0 delivers the enterprise gold standard for autonomous coding. Thank you."*
 - **Action**: Click **`[Voice Confirm: "Approve Alpha-7"]`** $\to$ Monaco editor flashes verified green $\to$ Show Terminal window running `python aegis_cli.py --dry-run` with passing tables $\to$ Fade to final title slide.
 
 ---

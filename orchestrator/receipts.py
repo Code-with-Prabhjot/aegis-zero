@@ -117,6 +117,8 @@ def render_html(receipt: Dict[str, Any]) -> str:
         round((avoided_usd / unpruned_est * 100.0), 1) if unpruned_est > 0 else 0.0,
     )
     actual_usd = c["actual"]
+    avoided_usd_display = f"-${avoided_usd:.4f} USD" if avoided_usd > 0 else f"${avoided_usd:.4f} USD"
+    avoided_pct_display = f"-{avoided_pct:.1f}%" if avoided_pct > 0 else f"{avoided_pct:.1f}%"
 
     def links(urls: List[str]) -> str:
         return "<br>".join('<a href="%s">%s</a>' % (e(u), e(u)) for u in urls[:3])
@@ -332,8 +334,8 @@ code {{ font-size:12.5px; word-break:break-all; font-family:ui-monospace,SFMono-
     </div>
     <div class="banner-stat highlight">
       <span class="stat-label">Expenditure Avoided</span>
-      <b class="stat-val avoided-val">-${avoided_usd:.4f} USD</b>
-      <span class="stat-sub saved-pill">-{avoided_pct:.1f}% API Cost Avoided ({t['saved']:,} tok)</span>
+      <b class="stat-val avoided-val">{avoided_usd_display}</b>
+      <span class="stat-sub saved-pill">{avoided_pct_display} API Cost Avoided ({t['saved']:,} tok)</span>
     </div>
   </div>
   <div class="banner-footer">

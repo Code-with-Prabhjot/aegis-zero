@@ -5,10 +5,10 @@ Single place for every model ID and per-tier price the orchestrator uses.
 All values can be overridden with environment variables, so the gateway can
 follow provider releases without code changes.
 
-Defaults (Claude prices are Anthropic first-party API rates):
-- Frontier tier:  claude-opus-5-5   ($4.00 in / $20.00 out per MTok, cache read $0.20)
-- Micro tier:     claude-haiku-5-5  ($0.10 in / $0.50 out per MTok, prompts <= 100K)
-- Cross-provider failover: AEGIS_FALLBACK_MODEL (default "gpt-5.6", an alias;
+Defaults:
+- Frontier tier:  claude-sonnet-4-20250514  ($4.00 in / $20.00 out per MTok, cache read $0.20)
+- Micro tier:     gpt-4o                   ($0.10 in / $0.50 out per MTok)
+- Cross-provider failover: AEGIS_FALLBACK_MODEL (default "gpt-4o";
   confirm against the provider's current model list for your account)
 - Local enclave:  deepseek-coder-v2 via Ollama ($0)
 

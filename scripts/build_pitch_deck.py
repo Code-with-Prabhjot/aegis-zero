@@ -1,7 +1,7 @@
 """
 AEGIS-0 Pitch Deck Generator (ReportLab 16:9 Widescreen)
 Generates docs/AEGIS_0_Pitch_Deck.pdf matching the official Geek Room Global AI Hackathon
-100-point rubric, 110/110 test suite count, and Cosmic Violet-Obsidian theme.
+100-point rubric, 111/111 test suite count, and Cosmic Violet-Obsidian theme.
 Strictly Anonymized: Team PS · MK · RRS · MB
 """
 
@@ -734,7 +734,7 @@ def build_deck(output_path: str):
 
     rubric_cards = [
         ("1. Technical Execution (25 Pts)", [
-            "• 110 / 110 Automated Pytest Suite Passing (100%)",
+            "• 111 / 111 Automated Pytest Suite Passing (100%)",
             "• Defensive exception handling & graceful syntax fallbacks",
             "• SHA-256 Merkle-chained tamper-evident audit ledger",
             "• Clean modular repo hygiene with strict typing",

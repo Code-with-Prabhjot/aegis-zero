@@ -33,7 +33,7 @@ Before opening either submission form, complete and verify the following gates:
   .venv\Scripts\python.exe -m pytest tests/ -v
   cd mission-control && npm run build && cd ..
   ```
-  Ensure all tests pass and frontend builds with 0 errors.
+  Ensure all 111 tests pass (111/111 passing in Linux CI · 110 passed / 1 skipped on Windows) and frontend builds with 0 errors.
 
 ---
 
@@ -108,6 +108,7 @@ Both forms are mandatory and must be submitted before **November 21, 2026, 11:59
 | **Live Mission Control (Vercel)** | [`https://aegis-zero-core.vercel.app`](https://aegis-zero-core.vercel.app) |
 | **Live Orchestrator API (Render)** | [`https://aegis-zero.onrender.com`](https://aegis-zero.onrender.com) &bull; [API Docs](https://aegis-zero.onrender.com/docs) |
 | **Pitch Deck (PDF)** | [`docs/AEGIS_0_Pitch_Deck.pdf`](AEGIS_0_Pitch_Deck.pdf) |
+| **Architecture Blueprint (PDF)** | [`docs/Aegis_Zero_Master_Architecture_Blueprint.pdf`](Aegis_Zero_Master_Architecture_Blueprint.pdf) |
 | **Demo Recording Cue Sheet** | [`docs/DEMO_SCRIPT.md`](DEMO_SCRIPT.md) |
 | **Benchmark Empirical Results** | [`docs/BENCHMARK_RESULTS.md`](BENCHMARK_RESULTS.md) |
 | **Render Blueprint** | [`render.yaml`](../render.yaml) |

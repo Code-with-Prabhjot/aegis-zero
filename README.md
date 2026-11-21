@@ -6,7 +6,7 @@
 
 [![Track](https://img.shields.io/badge/Track-PS--01_Bifrost_+_PS--06_Tavily_Dual--Stack-7928CA.svg?style=for-the-badge)](https://hackculture.io/hackathons/ai-global-hackathon)
 [![CI](https://github.com/Code-with-Prabhjot/aegis-zero/actions/workflows/ci.yml/badge.svg)](https://github.com/Code-with-Prabhjot/aegis-zero/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/Tests-110%2F110_Passing-10b981.svg?style=for-the-badge)](https://github.com)
+[![Tests](https://img.shields.io/badge/Tests-111%2F111_Passing-10b981.svg?style=for-the-badge)](https://github.com)
 [![Token Reduction](https://img.shields.io/badge/AST_Compression--74.3%25_Tokens_%C2%B7_92.9%25_Recall-d946ef.svg?style=for-the-badge)](#5-empirical-benchmarks)
 [![Failover](https://img.shields.io/badge/Circuit_Breaker-%3C180ms_Failover-06b6d4.svg?style=for-the-badge)](https://github.com)
 [![Privacy Lock](https://img.shields.io/badge/AirGap_Lock-Zero_WAN_Egress-ef4444.svg?style=for-the-badge)](https://github.com)
@@ -18,7 +18,7 @@
 
 **Built by Team PS &bull; MK &bull; RRS &bull; MB**
 
-[**Live Mission Control (Vercel)**](https://aegis-zero-core.vercel.app) &bull; [**Live Orchestrator API (Render)**](https://aegis-zero.onrender.com) &bull; [FastAPI Swagger Specs](https://aegis-zero.onrender.com/docs) &bull; [**Submission Handoff Guide**](docs/SUBMISSION_HANDOFF.md) &bull; [8-Slide Pitch Deck (PDF)](docs/AEGIS_0_Pitch_Deck.pdf) &bull; [Demo Script](docs/DEMO_SCRIPT.md) &bull; [Official Final Google Form](https://forms.gle/8fafao1ymEpihgKd9) &bull; [Bifrost Repo (Star ⭐)](https://github.com/maximhq/bifrost)
+[**Live Mission Control (Vercel)**](https://aegis-zero-core.vercel.app) &bull; [**Live Orchestrator API (Render)**](https://aegis-zero.onrender.com) &bull; [FastAPI Swagger Specs](https://aegis-zero.onrender.com/docs) &bull; [**Submission Handoff Guide**](docs/SUBMISSION_HANDOFF.md) &bull; [8-Slide Pitch Deck (PDF)](docs/AEGIS_0_Pitch_Deck.pdf) &bull; [Architecture Blueprint (PDF)](docs/Aegis_Zero_Master_Architecture_Blueprint.pdf) &bull; [Demo Script](docs/DEMO_SCRIPT.md) &bull; [Official Final Google Form](https://forms.gle/8fafao1ymEpihgKd9) &bull; [Bifrost Repo (Star ⭐)](https://github.com/maximhq/bifrost)
 
 </div>
 
@@ -321,6 +321,7 @@ aegis-zero/
 │   └── test_phase5_adjudicator.py   # 7 Multi-Session, Streaming & Multi-SDK Hardening Tests
 └── docs/                            # Competition Deliverables
     ├── AEGIS_0_Pitch_Deck.pdf       # Mandatory 8-Slide Widescreen (16:9) Presentation PDF
+    ├── Aegis_Zero_Master_Architecture_Blueprint.pdf # Complete Master Architecture & Mathematical Specification
     └── DEMO_SCRIPT.md               # 180-Second Timestamped Video Walkthrough Script
 ```
 
@@ -396,8 +397,8 @@ Copy `orchestrator/.env.example` and `mission-control/.env.example`. The most us
 
 | Variable | Default | Purpose |
 |:---|:---|:---|
-| `AEGIS_FRONTIER_MODEL` / `AEGIS_MICRO_MODEL` | `claude-opus-5-5` / `claude-haiku-5-5` | Models per tier (prices in `orchestrator/model_registry.py`) |
-| `AEGIS_FALLBACK_MODEL` | `gpt-5.6` | Cross-provider failover target (verify against your provider's model list) |
+| `AEGIS_FRONTIER_MODEL` / `AEGIS_MICRO_MODEL` | `claude-sonnet-4-20250514` / `gpt-4o` | Models per tier (prices in `orchestrator/model_registry.py`) |
+| `AEGIS_FALLBACK_MODEL` | `gpt-4o` | Cross-provider failover target (verify against your provider's model list) |
 | `AEGIS_WORKSPACE_ROOT` | `.aegis-workspace/` | Where approved writes land; point at a real checkout to apply changes there |
 | `AEGIS_SECRET_KEY` | dev default | HMAC key for the action gate (**set in production**) |
 | `AEGIS_CORS_ORIGINS` | `http://localhost:3000` | Browser origins allowed to call the orchestrator |
@@ -440,7 +441,7 @@ python aegis_cli.py "Audit orchestrator token efficiency" --repo ./orchestrator 
 The pytest suite covers unit, integration, red-team, hardening and adjudicator flows, plus
 regression suites for the action gate (forgery, replay, expiry, CORS), freshness precision and PyPI
 grounding, pruner determinism and granularity, retrieval recall, on-demand expansion, workspace writes
-and rollback, prompt-cache layout, and receipts. CI runs it on Python 3.10 and 3.12 along with the
+and rollback, prompt-cache layout, and receipts. CI runs all 111 collected tests on Python 3.10 and 3.12 (111/111 passing in Linux CI · 110 passed / 1 skipped on Windows) along with the
 frontend type-check and build.
 
 ```bash
@@ -475,8 +476,8 @@ AEGIS-0 is fully synchronized with the updated **Geek Room Global AI Hackathon T
 | **Submission Channel B** | **Official Final Google Form (`https://forms.gle/8fafao1ymEpihgKd9`)** &mdash; Mandatory final project lodging for jury shortlisting | ✅ Verified |
 | **Compulsory Verification Action** | **Compulsory GitHub Star on `maximhq/bifrost`** (`https://github.com/maximhq/bifrost`) with member GitHub usernames recorded | ✅ Verified |
 | **Double Win Eligibility** | Confirmed by organizers: *"Double Win: A team can win prizes from both tracks!"* Eligible for both Bifrost ($1,000 Cash + Interviews) and Tavily (60,000 Credits) pools simultaneously. | ✅ Verified |
-| **Deliverables Package** | Public GitHub Repo + [8-Slide Pitch Deck](docs/AEGIS_0_Pitch_Deck.pdf) (<5 MB, 16:9 Cosmic Violet) + [180s Demo Walkthrough Script](docs/DEMO_SCRIPT.md) | ✅ Verified |
-| **Automated Verification** | **Full pytest suite green in CI** (Python 3.10 & 3.12) spanning unit, integration, red-team, hardening, adjudicator and regression suites | ✅ Verified |
+| **Deliverables Package** | Public GitHub Repo + [8-Slide Pitch Deck](docs/AEGIS_0_Pitch_Deck.pdf) (<5 MB, 16:9 Cosmic Violet) + [Architecture Blueprint (PDF)](docs/Aegis_Zero_Master_Architecture_Blueprint.pdf) + [180s Demo Walkthrough Script](docs/DEMO_SCRIPT.md) | ✅ Verified |
+| **Automated Verification** | **Full pytest suite green in CI** (Python 3.10 & 3.12, 111/111 passing in Linux CI · 110 passed / 1 skipped on Windows) spanning unit, integration, red-team, hardening, adjudicator and regression suites | ✅ Verified |
 
 ---
 

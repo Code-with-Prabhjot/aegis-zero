@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: aegis-zero-api
+    name: aegis-zero
     runtime: python
     plan: free
     buildCommand: pip install -r orchestrator/requirements.txt
