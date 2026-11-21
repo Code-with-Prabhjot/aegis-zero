@@ -18,11 +18,15 @@
 
 **Built by Team PS &bull; MK &bull; RRS &bull; MB**
 
-[**Submission Handoff Guide**](docs/SUBMISSION_HANDOFF.md) &bull; [Live Mission Control UI](http://localhost:3000/workbench) &bull; [FastAPI Swagger Specs](http://localhost:8000/docs) &bull; [8-Slide Pitch Deck (PDF)](docs/AEGIS_0_Pitch_Deck.pdf) &bull; [Demo Script](docs/DEMO_SCRIPT.md) &bull; [Official Final Google Form](https://forms.gle/8fafao1ymEpihgKd9) &bull; [Bifrost Repo (Star ⭐)](https://github.com/maximhq/bifrost)
+[**Live Mission Control (Vercel)**](https://aegis-zero-core.vercel.app) &bull; [**Live Orchestrator API (Render)**](https://aegis-zero.onrender.com) &bull; [FastAPI Swagger Specs](https://aegis-zero.onrender.com/docs) &bull; [**Submission Handoff Guide**](docs/SUBMISSION_HANDOFF.md) &bull; [8-Slide Pitch Deck (PDF)](docs/AEGIS_0_Pitch_Deck.pdf) &bull; [Demo Script](docs/DEMO_SCRIPT.md) &bull; [Official Final Google Form](https://forms.gle/8fafao1ymEpihgKd9) &bull; [Bifrost Repo (Star ⭐)](https://github.com/maximhq/bifrost)
 
 </div>
 
 > [!IMPORTANT]
+> **Verified Live Production Deployments:**
+> - **Live Mission Control App (Vercel):** [`https://aegis-zero-core.vercel.app`](https://aegis-zero-core.vercel.app)
+> - **Live Orchestrator API (Render):** [`https://aegis-zero.onrender.com`](https://aegis-zero.onrender.com) &bull; [Interactive Swagger API Docs](https://aegis-zero.onrender.com/docs)
+>
 > **Submission Readiness & Team Handoff:** Complete pre-submission checklist gates, 3-minute demo video recording cue sheet, and exact copy-paste form fields for both mandatory portals are ready in [`docs/SUBMISSION_HANDOFF.md`](docs/SUBMISSION_HANDOFF.md).
 
 ---
@@ -369,6 +373,9 @@ Open **[http://localhost:3000/workbench](http://localhost:3000/workbench)**.
 AEGIS-0 supports both live external production environments and a 100% deterministic local offline fallback mode:
 
 - **Live Production Mode**:
+  - **Live Mission Control App (Vercel):** [`https://aegis-zero-core.vercel.app`](https://aegis-zero-core.vercel.app)
+  - **Live Orchestrator API (Render):** [`https://aegis-zero.onrender.com`](https://aegis-zero.onrender.com) &bull; [Interactive Swagger Docs](https://aegis-zero.onrender.com/docs)
+  
   Configure live endpoints and credentials in `orchestrator/.env`:
   ```bash
   BIFROST_GATEWAY_URL="http://localhost:8080/v1"   # Maxim AI Bifrost Proxy
@@ -455,10 +462,12 @@ In accordance with official hackathon submission guidelines, all team contributo
 
 ## 11. Hackathon Submission & Portal Synchronization (Geek Room Specification)
 
-AEGIS-0 is fully synchronized with the updated **Geek Room Global AI Hackathon Technical Specification** (`docs/Geek_Room_Global_AI_Hackathon_Specification.pdf`):
+AEGIS-0 is fully synchronized with the updated **Geek Room Global AI Hackathon Technical Specification**:
 
 | Portal Requirement | Official Specification & Verified Details | Compliance Status |
 |:---|:---|:---:|
+| **Live Mission Control (Vercel)** | [`https://aegis-zero-core.vercel.app`](https://aegis-zero-core.vercel.app) | ✅ Verified Live |
+| **Live Orchestrator API (Render)** | [`https://aegis-zero.onrender.com`](https://aegis-zero.onrender.com) &bull; [API Docs](https://aegis-zero.onrender.com/docs) | ✅ Verified Live |
 | **Prototype & Form Submission Deadline** | **November 21, 2026 (11:59 PM IST / 18:29 UTC)** (Extended Build Window) | ✅ Verified |
 | **Final Judging Round** | **November 28, 2026 (7:00 AM – 11:59 PM IST / 01:30 – 18:29 UTC)** (Online Finale) | ✅ Verified |
 | **Prize Pool (Double Win Eligible)** | **$1,000 USD Cash + Direct Engineering Interview Opportunities (Bifrost / Maxim AI)** + **60,000 Tavily Credits Pool** + **$50 Omnidimension Voice Credits** | ✅ Verified |

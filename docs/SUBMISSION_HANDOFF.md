@@ -7,6 +7,13 @@
 
 ---
 
+## 🌟 Verified Live Production Deployments
+* **Live Mission Control App (Vercel):** `https://aegis-zero-core.vercel.app`
+* **Live Orchestrator API (Render):** `https://aegis-zero.onrender.com`
+* **Interactive Swagger API Docs:** `https://aegis-zero.onrender.com/docs`
+
+---
+
 ## 1. Mandatory Pre-Submission Gates
 
 Before opening either submission form, complete and verify the following gates:
@@ -36,7 +43,7 @@ Follow the exact timestamped cues in [`docs/DEMO_SCRIPT.md`](DEMO_SCRIPT.md) (`0
 
 ### Launching the Environment for Recording:
 - **Option A (Live Production Cloud):**  
-  Open your live deployed frontend on Vercel (`https://<your-project>.vercel.app`) connected to the Render backend API (`https://aegis-zero-api.onrender.com`).
+  Open your live deployed frontend on Vercel (`https://aegis-zero-core.vercel.app`) connected to the Render backend API (`https://aegis-zero.onrender.com`).
 - **Option B (Local 1-Click Launch):**  
   Run in terminal:
   - Windows: `.\start_aegis.ps1`
@@ -72,7 +79,7 @@ Both forms are mandatory and must be submitted before **November 21, 2026, 11:59
 | **Primary Problem Statement** | `PS-01` (Bifrost &mdash; Coding Agent on Fewest Tokens) |
 | **Tavily Integration Checkbox** | **CHECKED** &check; *(Combined Project Double Win: \$1,000 cash + 60,000 Tavily credits + Maxim AI interview opportunities)* |
 | **GitHub Repository URL** | `https://github.com/Code-with-Prabhjot/aegis-zero` |
-| **Live Demo URL** | `https://<your-project>.vercel.app` *(or Render/Vercel URL)* |
+| **Live Demo URL** | `https://aegis-zero-core.vercel.app` *(Live API: `https://aegis-zero.onrender.com`)* |
 | **Pitch Deck File** | Upload `docs/AEGIS_0_Pitch_Deck.pdf` (8 slides, 16:9 widescreen) |
 | **Demo Video Link** | `https://youtu.be/<your-video-id>` *(or Google Drive link)* |
 | **Short Description** | *AEGIS-0 combines submodular AST knapsack pruning (-74.3% token reduction, 92.9% recall @ budget), Bifrost <180ms circuit-breaker failover, Tavily real-time freshness verification & auto-patching, and HMAC voice-gated authorization for zero-trust autonomous coding.* |
@@ -87,7 +94,7 @@ Both forms are mandatory and must be submitted before **November 21, 2026, 11:59
 | **Project Title** | `AEGIS-0: Zero-Trust Token-Optimal Autonomous Coding & Live-Verification Engine` |
 | **Track / Problem Statement Selection** | `PS-01` + `PS-06` Combined (Bifrost + Tavily Dual-Track) |
 | **GitHub Repository URL** | `https://github.com/Code-with-Prabhjot/aegis-zero` |
-| **Live Demo URL** | `https://<your-project>.vercel.app` *(or Render/Vercel URL)* |
+| **Live Demo URL** | `https://aegis-zero-core.vercel.app` *(Live API: `https://aegis-zero.onrender.com`)* |
 | **Demo Video URL** | `https://youtu.be/<your-video-id>` *(or Google Drive link)* |
 | **Team Initial Roster** | `PS`, `MK`, `RRS`, `MB` |
 | **Starred Bifrost GitHub Usernames** | List the 4 GitHub handles of `PS`, `MK`, `RRS`, `MB` who starred [https://github.com/maximhq/bifrost](https://github.com/maximhq/bifrost) |
@@ -98,6 +105,8 @@ Both forms are mandatory and must be submitted before **November 21, 2026, 11:59
 
 | Asset | Repository Path / Link |
 | :--- | :--- |
+| **Live Mission Control (Vercel)** | [`https://aegis-zero-core.vercel.app`](https://aegis-zero-core.vercel.app) |
+| **Live Orchestrator API (Render)** | [`https://aegis-zero.onrender.com`](https://aegis-zero.onrender.com) &bull; [API Docs](https://aegis-zero.onrender.com/docs) |
 | **Pitch Deck (PDF)** | [`docs/AEGIS_0_Pitch_Deck.pdf`](AEGIS_0_Pitch_Deck.pdf) |
 | **Demo Recording Cue Sheet** | [`docs/DEMO_SCRIPT.md`](DEMO_SCRIPT.md) |
 | **Benchmark Empirical Results** | [`docs/BENCHMARK_RESULTS.md`](BENCHMARK_RESULTS.md) |
