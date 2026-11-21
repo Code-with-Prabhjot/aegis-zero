@@ -6,7 +6,7 @@
 
 [![Track](https://img.shields.io/badge/Track-PS--01_Bifrost_+_PS--06_Tavily_Dual--Stack-7928CA.svg?style=for-the-badge)](https://hackculture.io/hackathons/ai-global-hackathon)
 [![CI](https://github.com/Code-with-Prabhjot/aegis-zero/actions/workflows/ci.yml/badge.svg)](https://github.com/Code-with-Prabhjot/aegis-zero/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/Tests-109%2F109_Passing-10b981.svg?style=for-the-badge)](https://github.com)
+[![Tests](https://img.shields.io/badge/Tests-110%2F110_Passing-10b981.svg?style=for-the-badge)](https://github.com)
 [![Token Reduction](https://img.shields.io/badge/AST_Compression--74.3%25_Tokens_%C2%B7_92.9%25_Recall-d946ef.svg?style=for-the-badge)](#5-empirical-benchmarks)
 [![Failover](https://img.shields.io/badge/Circuit_Breaker-%3C180ms_Failover-06b6d4.svg?style=for-the-badge)](https://github.com)
 [![Privacy Lock](https://img.shields.io/badge/AirGap_Lock-Zero_WAN_Egress-ef4444.svg?style=for-the-badge)](https://github.com)

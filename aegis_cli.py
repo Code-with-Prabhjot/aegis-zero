@@ -359,6 +359,13 @@ async def run_cli(
         out = render_html(receipt) if receipt_path.lower().endswith(".html") else json.dumps(receipt, indent=2)
         with open(receipt_path, "w", encoding="utf-8") as fh:
             fh.write(out)
+        avoided_usd = receipt["cost_usd"].get("cost_avoided_usd", 0.0)
+        avoided_pct = receipt["cost_usd"].get("cost_avoided_pct", 0.0)
+        console.print(
+            f"[bold green]✓ TOKEN RECEIPT ISSUED:[/bold green] [cyan]{receipt['run_id']}[/cyan] "
+            f"(SHA-256: [dim]{receipt['receipt_sha256'][:16]}...[/dim]) "
+            f"| Avoided: [bold green]${avoided_usd:.4f} USD (-{avoided_pct:.1f}%)[/bold green]"
+        )
         console.print(f"[dim]Receipt written to {os.path.abspath(receipt_path)}[/dim]")
 
     if dry_run:

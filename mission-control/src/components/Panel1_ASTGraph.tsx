@@ -498,7 +498,7 @@ export function Panel1_ASTGraph({
             <span
               className={`text-[10px] font-mono px-2.5 py-0.5 rounded-full font-semibold ${
                 selectedNode.selected
-                  ? "bg-emerald-950/80 border border-emerald-500/60 text-emerald-300 shadow-[0_0_8px_rgba(168,85,129,0.25)]"
+                  ? "bg-emerald-950/80 border border-emerald-500/60 text-emerald-300 shadow-[0_0_8px_rgba(16,185,129,0.25)]"
                   : "bg-purple-950/60 border border-purple-500/40 text-purple-300"
               }`}
             >
