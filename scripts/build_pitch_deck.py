@@ -1,7 +1,7 @@
 """
 AEGIS-0 Pitch Deck Generator (ReportLab 16:9 Widescreen)
 Generates docs/AEGIS_0_Pitch_Deck.pdf matching the official Geek Room Global AI Hackathon
-100-point rubric, 35/35 test suite count, and Cosmic Violet-Obsidian theme.
+100-point rubric, 108/108 test suite count, and Cosmic Violet-Obsidian theme.
 Strictly Anonymized: Team PS · MK · RRS · MB
 """
 
@@ -95,7 +95,7 @@ def build_deck(output_path: str):
 
     # 4 Bottom Metric Stat Cards
     metrics = [
-        ("-80.1%", "AST Token Bloat Reduction", ACCENT_FUCHSIA),
+        ("-74.3%", "AST Token Bloat Reduction", ACCENT_FUCHSIA),
         ("< 180 ms", "Bifrost Circuit Breaker Failover", ACCENT_CYAN),
         ("100.0%", "Tavily Freshness Accuracy", ACCENT_EMERALD),
         ("0.00%", "Pre-Call Budget Overrun Risk", TEXT_PURPLE),
@@ -241,7 +241,7 @@ def build_deck(output_path: str):
     c.drawString(55, 68, "THE AEGIS-0 RESOLUTION:")
     c.setFont("Helvetica", 9)
     c.setFillColor(TEXT_WHITE)
-    c.drawString(205, 68, "Submodular AST Knapsack Pruning (-80.1%) + Deterministic Pre-Call Ledger + Tavily Live Grounding + Air-Gap Enclaves")
+    c.drawString(205, 68, "Submodular AST Knapsack Pruning (-74.3%) + Deterministic Pre-Call Ledger + Tavily Live Grounding + Air-Gap Enclaves")
     c.showPage()
 
     # =========================================================================
@@ -282,7 +282,7 @@ def build_deck(output_path: str):
         ("3. AST & LEDGER", "KNAPSACK OPTIMIZER", [
             "Submodular AST Pruning",
             "1-Line Type-Safe Stubs",
-            "-80.1% Empirical Tokens",
+            "-74.3% Empirical Tokens",
             "Pre-Call Financial Bound",
             "Worst-case reservation",
             "Clean Hard Halt Machine",
@@ -349,7 +349,7 @@ def build_deck(output_path: str):
     c.drawString(40, 495, "Mathematical Core I: Submodular AST Knapsack Pruning")
     c.setFont("Helvetica", 10)
     c.setFillColor(TEXT_MUTED)
-    c.drawString(40, 477, "Graph-theoretic symbol selection with 1-line type stubs achieving -80.1% token reduction")
+    c.drawString(40, 477, "Graph-theoretic symbol selection with 1-line type stubs achieving -74.3% token reduction (92.9% recall)")
 
     w_half = 425
     # Left Box
@@ -412,10 +412,10 @@ def build_deck(output_path: str):
     c.drawRightString(895, 375, "Savings")
 
     bench_data = [
-        ("AEGIS-0 Orchestrator Core", "18,071 tok", "4,572 tok", "-74.7%"),
-        ("Zero-Trust Security Gate", "5,178 tok", "609 tok", "-88.2%"),
-        ("Tavily Freshness Engine", "4,989 tok", "425 tok", "-91.5%"),
-        ("Cross-Module Verified Average", "28,238 tok", "5,606 tok", "-80.1%"),
+        ("AEGIS-0 Orchestrator Core", "31,601 tok", "8,093 tok", "-74.4%"),
+        ("Zero-Trust Security Gate", "5,381 tok", "1,426 tok", "-73.5%"),
+        ("Tavily Freshness Engine", "10,487 tok", "2,696 tok", "-74.3%"),
+        ("Cross-Module Verified Average", "47,469 tok", "12,215 tok", "-74.3%"),
     ]
     by = 345
     c.setFont("Helvetica", 8.5)
@@ -435,11 +435,11 @@ def build_deck(output_path: str):
     draw_card(c, 510, 85, 395, 80, border_color=ACCENT_EMERALD, bg_color=HexColor("#061713"))
     c.setFont("Helvetica-Bold", 11)
     c.setFillColor(ACCENT_EMERALD)
-    c.drawString(525, 140, "AVERAGE COMPRESSION: -80.1% TOKEN BLOAT REDUCTION")
+    c.drawString(525, 140, "AVERAGE COMPRESSION: -74.3% (92.9% RECALL @ BUDGET)")
     c.setFont("Helvetica", 8.5)
     c.setFillColor(TEXT_WHITE)
     c.drawString(525, 118, "Guarantees seed function integrity while enabling 4x longer context horizon.")
-    c.drawString(525, 102, "Empirically verified across 28,000+ tokens of production code.")
+    c.drawString(525, 102, "Empirically verified across 47,000+ tokens of production code.")
     c.showPage()
 
     # =========================================================================
@@ -734,7 +734,7 @@ def build_deck(output_path: str):
 
     rubric_cards = [
         ("1. Technical Execution (25 Pts)", [
-            "• 35 / 35 Automated Pytest Suite Passing (100%)",
+            "• 108 / 108 Automated Pytest Suite Passing (100%)",
             "• Defensive exception handling & graceful syntax fallbacks",
             "• SHA-256 Merkle-chained tamper-evident audit ledger",
             "• Clean modular repo hygiene with strict typing",
@@ -746,7 +746,7 @@ def build_deck(output_path: str):
             "• Acoustic Voice Biometric Gate for destructive actions",
         ], ACCENT_FUCHSIA),
         ("3. Real-World Utility & Impact (20 Pts)", [
-            "• -80.1% Empirical token bloat reduction in dev loops",
+            "• -74.3% Empirical token bloat reduction & 92.9% recall",
             "• 0% Failure rate on contemporary SDK executions",
             "• Zero budget overruns guaranteed via hard-halt machine",
             "• Enterprise-grade IP exfiltration prevention",

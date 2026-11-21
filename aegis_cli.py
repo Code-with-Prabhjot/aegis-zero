@@ -10,8 +10,8 @@ Executes full institutional pipeline:
 import argparse
 import asyncio
 import hashlib
+import json
 import os
-import re
 import sys
 import uuid
 from typing import List, Dict, Any, Optional
@@ -39,6 +39,8 @@ from orchestrator.ast_pruner import ASTPruner
 from orchestrator.budget_ledger import BudgetLedger
 from orchestrator.bifrost_client import BifrostClient
 from orchestrator.pathway_stream import StreamingASTIndex
+from orchestrator.workspace import Workspace, WorkspaceError
+from orchestrator.receipts import build_receipt, render_html
 from privacy_guard import PrivacyGuard
 from freshness_engine import FreshnessEngine
 import secrets
@@ -50,6 +52,28 @@ AEGIS_SECRET_KEY = (
     or secrets.token_hex(32)
 )
 
+
+def _ensure_utf8_stdio() -> None:
+    """
+    Windows consoles (and subprocess pipes) default to a legacy code page such as
+    cp1252, which cannot encode the status glyphs used in CLI output and crashes
+    with UnicodeEncodeError. Configure UTF-8 encoding with replace errors, and fallback
+    to errors='replace' if reconfiguring encoding fails.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError, TypeError):
+            try:
+                reconfigure(errors="replace")
+            except (ValueError, OSError, TypeError):
+                pass
+
+
+_ensure_utf8_stdio()
 console = Console()
 
 
@@ -71,6 +95,7 @@ async def run_cli(
     proposed_action: str = "write_file",
     proposed_target: Optional[str] = None,
     live_mode: bool = False,
+    receipt_path: Optional[str] = None,
 ) -> int:
     print_banner()
 
@@ -159,11 +184,7 @@ async def run_cli(
 
     if all_nodes:
         raw_tokens = sum(n.token_cost for n in all_nodes)
-        prompt_words = set(re.findall(r"[A-Za-z0-9_]+", prompt))
-        node_names = {n.name for n in all_nodes if n.node_type != "import"}
-        seed_symbols = [w for w in prompt_words if w in node_names]
-        if not seed_symbols and node_names:
-            seed_symbols = [list(node_names)[0]]
+        seed_symbols = pruner.select_seeds(prompt, all_nodes)
 
         calibrated_budget = min(8000, max(1200, int(raw_tokens * 0.25)))
         hybrid_code, ast_stats = pruner.prune_context(
@@ -177,6 +198,7 @@ async def run_cli(
         compression_ratio = ast_stats["compression_ratio"]
         selected_count = len(ast_stats.get("selected_nodes", []))
         stubbed_count = len(ast_stats.get("stubbed_nodes", []))
+        selected_names = list(ast_stats.get("selected_nodes", []))
     else:
         prompt_t = pruner.count_tokens(prompt)
         raw_tokens = prompt_t
@@ -186,6 +208,7 @@ async def run_cli(
         selected_count = 1
         stubbed_count = 0
         hybrid_code = prompt
+        selected_names = []
 
     # AST Token Compression Table
     t_ast = Table(title="[STAGE 1] Submodular Knapsack AST Call-Graph Pruner", border_style="cyan")
@@ -265,7 +288,12 @@ async def run_cli(
             score = v["freshness_score"]
             is_stale = v["is_stale"]
             status_text = "[bold red]STALE (< 70)[/bold red]" if is_stale else "[bold green]FRESH (>= 70)[/bold green]"
-            patch_text = f"Patched -> {v['patch']['replacement_pattern'][:40]}" if v.get("patch") else "Verified Contemporary"
+            replacement = (v.get("patch") or {}).get("replacement_pattern")
+            patch_text = (
+                f"Patched -> {replacement[:40]}" if replacement
+                else "Flagged: manual review" if v.get("patch")
+                else "Verified Contemporary"
+            )
             t_fresh.add_row(v["claim"], f"{score:.1f}/100", status_text, patch_text)
     else:
         t_fresh.add_row("Syntax Core APIs", "98.5/100", "[bold green]FRESH (>= 70)[/bold green]", "Zero Stale Methods")
@@ -297,6 +325,42 @@ async def run_cli(
         )
     )
 
+    if receipt_path:
+        tier_price = ledger.pricing.get(dispatch_res.tier)
+        receipt = build_receipt(
+            session_id=session_id,
+            prompt=prompt,
+            status="DRY_RUN" if dry_run else "QUARANTINED",
+            model_used=dispatch_res.model,
+            model_tier=dispatch_res.tier.value,
+            failover_chain=dispatch_res.failover_chain,
+            raw_tokens=raw_tokens,
+            context_tokens=pruned_tokens,
+            expansion_tokens=0,
+            cached_prompt_tokens=dispatch_res.cached_prompt_tokens,
+            cost_usd=ledger._calculate_bound_cost(
+                dispatch_res.prompt_tokens, dispatch_res.completion_tokens, dispatch_res.tier,
+                dispatch_res.cached_prompt_tokens,
+            ),
+            unpruned_extra_cost_usd=(
+                max(0, raw_tokens - pruned_tokens) * tier_price.input_per_mtok / 1_000_000.0
+                if tier_price else 0.0
+            ),
+            selected_symbols=selected_names,
+            stubbed_count=stubbed_count,
+            expansions=[],
+            freshness=verifications,
+            action={"action_id": action_id, "category": "write", "target": target_file,
+                    "status": "DRY_RUN" if dry_run else "QUARANTINED"},
+            privacy_tainted=privacy_tainted,
+            audit_head=None,
+            audit_chain_valid=None,
+        )
+        out = render_html(receipt) if receipt_path.lower().endswith(".html") else json.dumps(receipt, indent=2)
+        with open(receipt_path, "w", encoding="utf-8") as fh:
+            fh.write(out)
+        console.print(f"[dim]Receipt written to {os.path.abspath(receipt_path)}[/dim]")
+
     if dry_run:
         console.print("[bold green]✓ [DRY-RUN MODE]: Pipeline verified successfully. Zero mutations committed.[/bold green]\n")
         return 0
@@ -316,12 +380,63 @@ async def run_cli(
             actual_output_tokens=dispatch_res.completion_tokens,
             tier=dispatch_res.tier,
         )
-        console.print(f"[bold green]✓ HMAC-SHA256 VERIFIED: Action {action_id} safely executed on main.[/bold green]\n")
+        workspace = Workspace(
+            os.getenv("AEGIS_WORKSPACE_ROOT") or os.path.join(REPO_ROOT, ".aegis-workspace")
+        )
+        try:
+            written = workspace.write(target_file, final_code)
+        except WorkspaceError as exc:
+            console.print(f"[bold red]✗ WRITE REFUSED: {exc}[/bold red]\n")
+            return 1
+        console.print(
+            f"[bold green]✓ HMAC-SHA256 VERIFIED: Action {action_id} written to {written}[/bold green]\n"
+            f"[dim]Workspace root: {workspace.root} "
+            f"(set AEGIS_WORKSPACE_ROOT to apply to a real checkout)[/dim]\n"
+        )
     else:
         console.print("[bold red]✗ CRYPTOGRAPHIC VERIFICATION FAILED: Forged or invalid HMAC signature.[/bold red]\n")
         return 1
 
     return 0
+
+
+def run_retrieval_eval(pruner: Optional[ASTPruner] = None) -> Dict[str, float]:
+    """
+    Prints recall@budget on the labelled question set: does the pruned
+    context still contain the code needed to answer each question?
+    """
+    from evals.pruning_eval import run_eval
+
+    results, summary = run_eval(pruner=pruner)
+
+    t_eval = Table(title="Retrieval Quality: Recall @ Token Budget", border_style="magenta")
+    t_eval.add_column("Module", style="bold white")
+    t_eval.add_column("Question", style="dim white")
+    t_eval.add_column("Pruned Tokens", style="cyan", justify="right")
+    t_eval.add_column("Compression", style="magenta", justify="right")
+    t_eval.add_column("Required Code Kept", justify="center")
+
+    for r in results:
+        t_eval.add_row(
+            r.case.repo,
+            r.case.query if len(r.case.query) <= 60 else r.case.query[:57] + "...",
+            f"{r.pruned_tokens:,}",
+            f"-{r.compression * 100:.1f}%",
+            "[green]YES[/green]" if r.recall == 1.0 else f"[red]MISSED {', '.join(r.missed)}[/red]",
+        )
+
+    console.print(t_eval)
+    console.print(
+        Panel(
+            f"[bold magenta]MEAN RECALL @ BUDGET: {summary['mean_recall'] * 100:.1f}%[/bold magenta]   "
+            f"[bold green]MEAN COMPRESSION: -{summary['mean_compression'] * 100:.1f}%[/bold green]\n"
+            f"[dim]{summary['cases']} labelled questions over this repository. A question counts as answered "
+            f"only if the full body of every required symbol survives pruning.[/dim]",
+            border_style="magenta",
+            padding=(0, 2),
+        )
+    )
+    return summary
 
 
 def run_benchmark() -> int:
@@ -359,10 +474,7 @@ def run_benchmark() -> int:
         if not nodes:
             continue
         raw_t = sum(n.token_cost for n in nodes)
-        node_names = {n.name for n in nodes if n.node_type != "import"}
-        words = sorted(list(set(re.findall(r"[A-Za-z0-9_]+", sample_query))))
-        matching_seeds = [w for w in words if w in node_names]
-        seeds = matching_seeds or sorted(list(node_names))[:1]
+        seeds = pruner.select_seeds(sample_query, nodes)
         budget = min(8000, max(1200, int(raw_t * 0.25)))
         hybrid_code, stats = pruner.prune_context(
             nodes=nodes,
@@ -404,6 +516,8 @@ def run_benchmark() -> int:
             padding=(0, 2),
         )
     )
+
+    run_retrieval_eval(pruner)
     return 0
 
 
@@ -542,6 +656,12 @@ def main():
         help="Target file path for patch action",
     )
     parser.add_argument(
+        "--receipt",
+        default=None,
+        metavar="PATH",
+        help="Write a token receipt for this run (JSON, or HTML if PATH ends in .html)",
+    )
+    parser.add_argument(
         "--benchmark",
         action="store_true",
         help="Execute submodular knapsack AST token compression benchmarks across modules",
@@ -589,6 +709,7 @@ def main():
             proposed_action=args.action,
             proposed_target=args.target,
             live_mode=args.live,
+            receipt_path=args.receipt,
         )
     )
     sys.exit(code)

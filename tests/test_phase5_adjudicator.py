@@ -30,6 +30,7 @@ TAVILY_DIR = os.path.join(REPO_ROOT, "tavily_freshness")
 if TAVILY_DIR not in sys.path:
     sys.path.insert(0, TAVILY_DIR)
 
+from orchestrator import model_registry
 from orchestrator.schemas import ModelTier
 from orchestrator.main import app, bifrost, AEGIS_SECRET_KEY
 from orchestrator.budget_ledger import BudgetLedger
@@ -202,10 +203,10 @@ async def test_bifrost_circuit_breaker_multi_model_failover_resilience():
         target_tier=ModelTier.TIER_2_FRONTIER,
     )
     assert res_healthy.failover_occurred is False
-    assert res_healthy.model == "claude-3-5-sonnet"
+    assert res_healthy.model == model_registry.FRONTIER_MODEL
 
     # Inject HTTP 429 outage on primary
-    client.inject_chaos_fault(status_code=429, target_model="claude-3-5-sonnet")
+    client.inject_chaos_fault(status_code=429, target_model=model_registry.FRONTIER_MODEL)
 
     res_failover = await client.dispatch(
         messages=[{"role": "user", "content": "Ping under chaos"}],
@@ -215,7 +216,7 @@ async def test_bifrost_circuit_breaker_multi_model_failover_resilience():
     )
 
     assert res_failover.failover_occurred is True
-    assert res_failover.model == "gpt-4o"
+    assert res_failover.model == model_registry.FALLBACK_MODEL
     assert res_failover.latency_ms < 180.0, f"Expected failover latency <180ms, got {res_failover.latency_ms}ms"
 
     # Reset

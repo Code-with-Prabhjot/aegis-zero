@@ -12,6 +12,7 @@ import {
   Activity,
 } from "lucide-react";
 import { TelemetryState } from "@/types";
+import { MODELS } from "@/lib/config";
 
 interface Panel2Props {
   telemetry: TelemetryState;
@@ -152,7 +153,7 @@ export function Panel2_ChaosBudget({
                   />
                   <div>
                     <h4 className="text-sm font-bold text-white font-mono">
-                      {isChaos ? "OpenAI GPT-4o (Failover)" : "Claude 3.5 Sonnet (Primary)"}
+                      {isChaos ? `${MODELS.fallback} (Failover)` : `${MODELS.frontier} (Primary)`}
                     </h4>
                     <p className="text-xs text-purple-300/70">
                       {isChaos
@@ -192,7 +193,7 @@ export function Panel2_ChaosBudget({
                       <span className="w-2 h-2 rounded-full bg-brandGreen shadow-[0_0_6px_#10b981]" />
                     )}
                   </div>
-                  <p className="font-bold text-xs truncate">Claude 3.5 Sonnet</p>
+                  <p className="font-bold text-xs truncate">{MODELS.frontier}</p>
                   <span className="text-[9px] text-purple-400/60">Tier-2 Frontier</span>
                 </div>
 
@@ -210,16 +211,16 @@ export function Panel2_ChaosBudget({
                       <span className="w-2 h-2 rounded-full bg-brandAmber shadow-[0_0_6px_#f59e0b] animate-pulse" />
                     )}
                   </div>
-                  <p className="font-bold text-xs truncate">OpenAI GPT-4o</p>
+                  <p className="font-bold text-xs truncate">{MODELS.fallback}</p>
                   <span className="text-[9px] text-amber-300/70">Sub-180ms Auto-Route</span>
                 </div>
 
                 {/* Tier 3 Micro Fast Fallback */}
                 <div className="p-2.5 rounded-xl border bg-[#090514]/60 border-purple-900/30 text-purple-300/70">
                   <div className="flex items-center justify-between text-[10px] text-purple-400/60 mb-1">
-                    <span>3. High-Speed Fallback</span>
+                    <span>3. Budget Down-Route</span>
                   </div>
-                  <p className="font-bold text-xs truncate">Groq Llama-3.3-70B</p>
+                  <p className="font-bold text-xs truncate">{MODELS.micro}</p>
                   <span className="text-[9px] text-purple-400/60">Tier-1 Micro (&lt;$0.08)</span>
                 </div>
 
@@ -228,7 +229,7 @@ export function Panel2_ChaosBudget({
                   <div className="flex items-center justify-between text-[10px] text-purple-400/60 mb-1">
                     <span>4. Air-Gapped Enclave</span>
                   </div>
-                  <p className="font-bold text-xs truncate">Local Ollama Llama-3</p>
+                  <p className="font-bold text-xs truncate">{MODELS.local}</p>
                   <span className="text-[9px] text-purple-400/60">Tier-0 Air-Gap Lock</span>
                 </div>
               </div>

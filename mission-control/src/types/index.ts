@@ -41,6 +41,7 @@ export interface QuarantinedAction {
   diff_payload: string;
   original_payload: string;
   hmac_token: string;
+  signed_payload?: string;
   is_quarantined: boolean;
   is_approved: boolean;
   acoustic_prompt: string;

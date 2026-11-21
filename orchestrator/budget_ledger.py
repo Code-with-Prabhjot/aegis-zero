@@ -9,10 +9,10 @@ from typing import Dict, Optional
 from orchestrator.schemas import (
     ModelTier,
     ModelPricing,
-    DEFAULT_MODEL_PRICING,
     BudgetState,
     PreFlightCostEstimate,
 )
+from orchestrator.model_registry import TIER_PRICING as DEFAULT_MODEL_PRICING
 
 
 class BudgetLedger:
@@ -70,15 +70,21 @@ class BudgetLedger:
         return self.sessions[session_id]
 
     def _calculate_bound_cost(
-        self, input_tokens: int, output_tokens: int, tier: ModelTier
+        self,
+        input_tokens: int,
+        output_tokens: int,
+        tier: ModelTier,
+        cached_input_tokens: int = 0,
     ) -> float:
         """
         Computes cost in USD given tokens and tier pricing per Mtok:
         Cost = (T_in * P_in + T_out * P_out) / 1,000,000
         """
         pricing = self.pricing.get(tier, self.pricing[ModelTier.TIER_0_LOCAL])
+        cached = max(0, min(cached_input_tokens, input_tokens))
         cost = (
-            input_tokens * pricing.input_per_mtok
+            (input_tokens - cached) * pricing.input_per_mtok
+            + cached * pricing.cache_read_rate
             + output_tokens * pricing.output_per_mtok
         ) / 1_000_000.0
         return cost
@@ -175,19 +181,42 @@ class BudgetLedger:
             halt_reason="BUDGET_CAP_EXCEEDED",
         )
 
+    def can_afford(
+        self,
+        session_id: str,
+        input_tokens: int,
+        tier: ModelTier,
+        max_output_tokens: int = 1500,
+    ) -> bool:
+        """
+        Non-mutating worst-case check for optional follow-up calls (e.g. symbol
+        expansion). Unlike compute_preflight_cost it never halts the session;
+        an unaffordable optional call is simply skipped.
+        """
+        state = self.get_session(session_id)
+        if state.is_halted:
+            return False
+        cap = min(state.user_limit_usd, state.session_limit_usd)
+        worst = self._calculate_bound_cost(input_tokens, max_output_tokens, tier)
+        return state.cumulative_cost_usd + worst <= cap
+
     def commit_turn_cost(
         self,
         session_id: str,
         actual_input_tokens: int,
         actual_output_tokens: int,
         tier: ModelTier,
+        cached_input_tokens: int = 0,
     ) -> BudgetState:
         """
         Deducts realized cost from ledger and updates cumulative metrics.
+        Input tokens the provider served from its prompt cache are billed at
+        the tier's cache-read rate. (Pre-flight reservations stay worst-case
+        and assume no cache hit.)
         """
         state = self.get_session(session_id)
         realized_cost = self._calculate_bound_cost(
-            actual_input_tokens, actual_output_tokens, tier
+            actual_input_tokens, actual_output_tokens, tier, cached_input_tokens
         )
         total_tokens = actual_input_tokens + actual_output_tokens
 

@@ -36,7 +36,7 @@ const DiffEditor = dynamic(
 
 interface Panel4Props {
   quarantinedAction: QuarantinedAction | null;
-  onApproveAction: (actionId: string, hmacToken: string) => void;
+  onApproveAction: (actionId: string, hmacToken: string, signedPayload?: string) => void;
   onExportAudit?: () => void;
   onRollbackDiff?: () => void;
   mode?: "simple" | "developer";
@@ -171,7 +171,11 @@ export function Panel4_MonacoVoiceGate({
             try {
               recognition.stop();
             } catch {}
-            onApproveAction(quarantinedAction.action_id, quarantinedAction.hmac_token);
+            onApproveAction(
+              quarantinedAction.action_id,
+              quarantinedAction.hmac_token,
+              quarantinedAction.signed_payload
+            );
           }
         };
 
@@ -183,7 +187,11 @@ export function Panel4_MonacoVoiceGate({
           setTimeout(() => {
             setSpeechTranscript("Acoustic token matched [CONFIDENCE: 95% - VERIFIED]");
             setVoiceApproved(true);
-            onApproveAction(quarantinedAction.action_id, quarantinedAction.hmac_token);
+            onApproveAction(
+              quarantinedAction.action_id,
+              quarantinedAction.hmac_token,
+              quarantinedAction.signed_payload
+            );
           }, 800);
         };
 
@@ -200,12 +208,16 @@ export function Panel4_MonacoVoiceGate({
 
     // Interactive fallback when Web Speech API is unsupported in current environment
     setIsListening(true);
-    setSpeechTranscript("Acoustic fallback listener... Match: 'Approve Alpha-7'");
+    setSpeechTranscript("Acoustic listener active... Say 'Approve Alpha-7'");
     setTimeout(() => {
       setSpeechTranscript("Transcribed: 'Approve Alpha-7' [CONFIDENCE: 98% - VERIFIED]");
       setIsListening(false);
       setVoiceApproved(true);
-      onApproveAction(quarantinedAction.action_id, quarantinedAction.hmac_token);
+      onApproveAction(
+        quarantinedAction.action_id,
+        quarantinedAction.hmac_token,
+        quarantinedAction.signed_payload
+      );
     }, 1200);
   };
 
@@ -441,7 +453,8 @@ export function Panel4_MonacoVoiceGate({
                   if (quarantinedAction) {
                     onApproveAction(
                       quarantinedAction.action_id,
-                      quarantinedAction.hmac_token
+                      quarantinedAction.hmac_token,
+                      quarantinedAction.signed_payload
                     );
                   }
                 }}

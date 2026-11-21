@@ -9,6 +9,8 @@ import {
   QuarantinedAction,
   TelemetryState,
 } from "@/types";
+import { MODELS, apiUrl, wsUrl } from "@/lib/config";
+
 
 const INITIAL_NODES: ASTGraphNode[] = [
   {
@@ -323,32 +325,10 @@ def verify_session_handshake(auth_token, session_id):
   passphrase: "Approve Alpha-7",
 };
 
-const getApiBaseUrl = (): string => {
-  if (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_API_BASE_URL) {
-    return process.env.NEXT_PUBLIC_API_BASE_URL;
-  }
-  return "";
-};
-
-const getWsBaseUrl = (): string => {
-  if (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_WS_BASE_URL) {
-    return process.env.NEXT_PUBLIC_WS_BASE_URL;
-  }
-  if (typeof window !== "undefined") {
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const host = window.location.host;
-    if (host.includes(":3000")) {
-      return `${protocol}//${window.location.hostname}:8000`;
-    }
-    return `${protocol}//${host}`;
-  }
-  return "ws://127.0.0.1:8000";
-};
-
 export function useOrchestrator() {
   const [telemetry, setTelemetry] = useState<TelemetryState>({
     gatewayStatus: "ONLINE",
-    activeModel: "claude-3-5-sonnet-20241022",
+    activeModel: MODELS.frontier,
     activeTier: "tier-2-frontier",
     tokenSavingsPct: 80.1,
     cumulativeCostUsd: 0.0418,
@@ -375,7 +355,7 @@ export function useOrchestrator() {
 
     const connectWs = () => {
       try {
-        const ws = new WebSocket(`${getWsBaseUrl()}/ws/telemetry`);
+        const ws = new WebSocket(wsUrl("/ws/telemetry"));
         wsRef.current = ws;
 
         ws.onopen = () => {
@@ -389,21 +369,21 @@ export function useOrchestrator() {
               setTelemetry((prev) => ({
                 ...prev,
                 gatewayStatus: "CHAOS_INJECTED",
-                activeModel: "gpt-4o",
+                activeModel: MODELS.fallback,
                 activeTier: "tier-2-frontier",
                 circuitBreakerTripped: true,
                 failoverLatencyMs: 138,
               }));
-              setFailoverToast("HTTP 429 INJECTED -> Bifrost Failover: claude-3-5-sonnet -> gpt-4o (138ms)");
+              setFailoverToast(`HTTP 429 INJECTED -> Bifrost Failover: ${MODELS.frontier} -> ${MODELS.fallback} (138ms)`);
             } else if (data.type === "CHAOS_RESET") {
               setTelemetry((prev) => ({
                 ...prev,
                 gatewayStatus: "ONLINE",
-                activeModel: "claude-3-5-sonnet-20241022",
+                activeModel: MODELS.frontier,
                 activeTier: "tier-2-frontier",
                 circuitBreakerTripped: false,
               }));
-              setFailoverToast("Primary Frontier Model Restored (claude-3-5-sonnet)");
+              setFailoverToast(`Primary Frontier Model Restored (${MODELS.frontier})`);
             } else if (data.type === "BUDGET_CAP_HALT") {
               setTelemetry((prev) => ({
                 ...prev,
@@ -452,7 +432,7 @@ export function useOrchestrator() {
   // 1-Click Chaos Trigger
   const triggerChaosOutage = useCallback(async () => {
     try {
-      await fetch(`${getApiBaseUrl()}/api/chaos/inject`, {
+      await fetch(apiUrl("/api/chaos/inject"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status_code: 429 }),
@@ -464,7 +444,7 @@ export function useOrchestrator() {
     setTelemetry((prev) => ({
       ...prev,
       gatewayStatus: "CHAOS_INJECTED",
-      activeModel: "gpt-4o",
+      activeModel: MODELS.fallback,
       circuitBreakerTripped: true,
       failoverLatencyMs: 138,
     }));
@@ -474,7 +454,7 @@ export function useOrchestrator() {
   // Reset Chaos
   const resetChaos = useCallback(async () => {
     try {
-      await fetch(`${getApiBaseUrl()}/api/chaos/reset`, {
+      await fetch(apiUrl("/api/chaos/reset"), {
         method: "POST",
       });
     } catch {
@@ -484,7 +464,7 @@ export function useOrchestrator() {
     setTelemetry((prev) => ({
       ...prev,
       gatewayStatus: "ONLINE",
-      activeModel: "claude-sonnet-4-20250514",
+      activeModel: MODELS.frontier,
       activeTier: "tier-2-frontier",
       circuitBreakerTripped: false,
     }));
@@ -501,13 +481,13 @@ export function useOrchestrator() {
 
       if (isHalted) {
         targetTier = "tier-0-local";
-        activeModel = "deepseek-coder-v2 (local enclave)";
+        activeModel = `${MODELS.local} (local enclave)`;
       } else if (remaining < 0.08) {
         targetTier = "tier-1-micro";
-        activeModel = "haiku-3.5 / gpt-4o-mini (down-routed)";
+        activeModel = `${MODELS.micro} (down-routed)`;
       } else if (!prev.circuitBreakerTripped) {
         targetTier = "tier-2-frontier";
-        activeModel = "claude-3-5-sonnet-20241022";
+        activeModel = MODELS.frontier;
       }
 
       return {
@@ -524,34 +504,54 @@ export function useOrchestrator() {
     });
   }, []);
 
-  // Approve quarantined action
-  const approveAction = useCallback(async (actionId: string, hmacToken: string) => {
-    try {
-      await fetch(`${getApiBaseUrl()}/api/action/approve`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action_id: actionId,
-          hmac_token: hmacToken,
-          payload: "write:src/auth/session_guard.py:verified_patch",
-        }),
-      });
-    } catch {
-      // Offline fallback
-    }
+  // Approve quarantined action.
+  // Sends the exact payload the server signed; the UI only marks the action
+  // approved when the server accepts it. Actions without a signed payload are
+  // the built-in offline demo action and are approved locally.
+  const approveAction = useCallback(
+    async (actionId: string, hmacToken: string, signedPayload?: string) => {
+      const markApproved = (toast: string) => {
+        setTelemetry((prev) => ({
+          ...prev,
+          quarantinedAction: prev.quarantinedAction
+            ? { ...prev.quarantinedAction, is_approved: true, is_quarantined: false }
+            : null,
+        }));
+        setFailoverToast(toast);
+      };
 
-    setTelemetry((prev) => ({
-      ...prev,
-      quarantinedAction: prev.quarantinedAction
-        ? {
-            ...prev.quarantinedAction,
-            is_approved: true,
-            is_quarantined: false,
-          }
-        : null,
-    }));
-    setFailoverToast(`HMAC VERIFIED: Action ${actionId} approved and safely committed to main.`);
-  }, []);
+      if (!signedPayload) {
+        markApproved(`DEMO MODE: Action ${actionId} approved locally (no live backend action).`);
+        return;
+      }
+
+      try {
+        const res = await fetch(apiUrl("/api/action/approve"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action_id: actionId,
+            hmac_token: hmacToken,
+            payload: signedPayload,
+          }),
+        });
+        if (res.ok) {
+          const body = await res.json().catch(() => ({}));
+          markApproved(
+            body.written_path
+              ? `HMAC VERIFIED: Action ${actionId} written to ${body.written_path} (rollback available).`
+              : `HMAC VERIFIED: Action ${actionId} approved.`
+          );
+          return;
+        }
+        const body = await res.json().catch(() => ({}));
+        setFailoverToast(`APPROVAL REJECTED (${res.status}): ${body.detail ?? "verification failed"}`);
+      } catch {
+        setFailoverToast("APPROVAL FAILED: Orchestrator unreachable. Action remains quarantined.");
+      }
+    },
+    []
+  );
 
   // 1-Click Apply Tavily Fresh Patch
   const applyFreshPatch = useCallback((claimId: string) => {
@@ -594,7 +594,7 @@ export function useOrchestrator() {
     setTelemetry((prev) => ({
       ...prev,
       gatewayStatus: "ONLINE",
-      activeModel: "claude-3-5-sonnet-20241022",
+      activeModel: MODELS.frontier,
       activeTier: "tier-2-frontier",
       airGapLock: false,
       tokenSavingsPct: 80.1,
@@ -618,8 +618,8 @@ export function useOrchestrator() {
         airGapLock: willLock,
         activeTier: willLock ? "tier-0-local" : "tier-2-frontier",
         activeModel: willLock
-          ? "deepseek-coder-v2 (air-gapped local enclave)"
-          : "claude-3-5-sonnet-20241022",
+          ? `${MODELS.local} (air-gapped local enclave)`
+          : MODELS.frontier,
       };
     });
     setFailoverToast(
@@ -628,6 +628,8 @@ export function useOrchestrator() {
   }, []);
 
   const [isExecuting, setIsExecuting] = useState(false);
+  // run_id of the latest live orchestration, for its token receipt
+  const [lastRunId, setLastRunId] = useState<string | null>(null);
 
   // Live Dogfooding Agent Runner
   const runLiveAgent = useCallback(
@@ -637,7 +639,7 @@ export function useOrchestrator() {
     ) => {
       setIsExecuting(true);
       try {
-        const response = await fetch(`${getApiBaseUrl()}/api/orchestrate`, {
+        const response = await fetch(apiUrl("/api/orchestrate"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -653,6 +655,7 @@ export function useOrchestrator() {
         }
 
         const data = await response.json();
+        if (data.run_id) setLastRunId(data.run_id);
 
         // Map live AST nodes to visualization graph
         let convertedNodes: ASTGraphNode[] = [];
@@ -716,6 +719,7 @@ export function useOrchestrator() {
             diff_payload: data.action_quarantine.diff_payload || data.generated_code,
             original_payload: data.original_code || `# Original code baseline`,
             hmac_token: data.action_quarantine.hmac_token,
+            signed_payload: data.action_quarantine.signed_payload,
             is_quarantined: data.action_quarantine.is_quarantined,
             is_approved: data.action_quarantine.is_approved,
             acoustic_prompt: `AEGIS-0 requests permission to modify ${data.action_quarantine.command_or_path}. Say 'Approve Alpha-7' to commit.`,
@@ -772,7 +776,7 @@ export function useOrchestrator() {
     ) => {
       setIsExecuting(true);
       try {
-        const response = await fetch(`${getApiBaseUrl()}/api/security/redteam`, {
+        const response = await fetch(apiUrl("/api/security/redteam"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -786,7 +790,7 @@ export function useOrchestrator() {
           ...prev,
           airGapLock: true,
           activeTier: "tier-0-local",
-          activeModel: "deepseek-coder-v2 (local enclave)",
+          activeModel: `${MODELS.local} (local enclave)`,
         }));
         setFailoverToast(
           `ATTACK CONTAINED: Entropy H=${data.entropy_score || 5.12} -> Hardware Locked to Local Ollama Enclave`
@@ -796,7 +800,7 @@ export function useOrchestrator() {
           ...prev,
           airGapLock: true,
           activeTier: "tier-0-local",
-          activeModel: "deepseek-coder-v2 (local enclave)",
+          activeModel: `${MODELS.local} (local enclave)`,
         }));
         setFailoverToast(
           "ATTACK CONTAINED: Entropy H=5.12 -> Hardware Locked to Local Ollama Enclave"
@@ -811,7 +815,7 @@ export function useOrchestrator() {
   // 1-Click Compliance Bundle Export
   const exportAuditBundle = useCallback(async () => {
     try {
-      const res = await fetch(`${getApiBaseUrl()}/api/audit/export`);
+      const res = await fetch(apiUrl("/api/audit/export"));
       const data = await res.json();
       const blob = new Blob([JSON.stringify(data, null, 2)], {
         type: "application/json",
@@ -863,7 +867,7 @@ export function useOrchestrator() {
   // Atomic Rollback Last Diff
   const rollbackLastDiff = useCallback(async () => {
     try {
-      const res = await fetch(`${getApiBaseUrl()}/api/action/rollback`, {
+      const res = await fetch(apiUrl("/api/action/rollback"), {
         method: "POST",
       });
       const data = await res.json();
@@ -922,5 +926,7 @@ export function useOrchestrator() {
     testInjectionAttack,
     exportAuditBundle,
     rollbackLastDiff,
+    lastRunId,
+    receiptUrl: lastRunId ? apiUrl(`/api/receipts/${lastRunId}?format=html`) : null,
   };
 }

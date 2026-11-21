@@ -6,15 +6,16 @@ Tavily Freshness & Stale-API Verification, and HMAC-SHA256 Cryptographic Action 
 """
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
+import hmac
 import os
-import re
 import sys
 import uuid
 from typing import Dict, List, Optional, Any
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, status
+from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 # Ensure all subpackages are resolvable on sys.path
@@ -41,21 +42,45 @@ from orchestrator.schemas import (
     RedTeamRequest,
     RedTeamResponse,
 )
+from orchestrator import model_registry
 from orchestrator.ast_pruner import ASTPruner
 from orchestrator.budget_ledger import BudgetLedger
 from orchestrator.bifrost_client import BifrostClient
 from orchestrator.pathway_stream import StreamingASTIndex
+from orchestrator.workspace import Workspace, WorkspaceError
+from orchestrator.receipts import build_receipt, render_html
 from privacy_guard import PrivacyGuard
 from freshness_engine import FreshnessEngine
+from package_metadata import parse_dependency_pins
 import secrets
 from audit_trail import TamperEvidentAuditLedger
 
-# Institutional Shared Secret for HMAC Cryptographic Gates
+# Model-driven expansion of stubbed symbols: rounds per request, symbols per round.
+MAX_EXPANSION_ROUNDS = int(os.getenv("AEGIS_MAX_EXPANSION_ROUNDS", "2"))
+MAX_EXPANSIONS_PER_ROUND = 3
+
+EXPANSION_INSTRUCTIONS = (
+    "Symbols shown as signatures ending in `: ...` are stubs: their bodies were "
+    "omitted to save tokens. If you need a stub's full body to answer correctly, "
+    "reply with ONLY lines of the form `EXPAND: <SymbolName>` (at most 3) and "
+    "nothing else; the bodies will be sent back to you. Otherwise answer directly."
+)
+
+# Institutional Shared Secret for HMAC Cryptographic Gates.
+# Only the server ever signs or verifies with this key; clients never supply it.
 AEGIS_SECRET_KEY = (
     os.getenv("AEGIS_HMAC_SECRET")
     or os.getenv("AEGIS_SECRET_KEY")
     or secrets.token_hex(32)
 )
+
+# Quarantined actions expire if not approved within this window.
+ACTION_APPROVAL_TTL_SECONDS = int(os.getenv("AEGIS_ACTION_TTL_SECONDS", "900"))
+
+# Approved writes land in this confined workspace. Defaults to a gitignored
+# sandbox so demo approvals never overwrite the project's own source files.
+WORKSPACE_ROOT = os.getenv("AEGIS_WORKSPACE_ROOT") or os.path.join(REPO_ROOT, ".aegis-workspace")
+WRITE_ACTIONS = ("write", "write_file", "apply_diff")
 
 app = FastAPI(
     title="AEGIS-0 Orchestrator",
@@ -63,10 +88,19 @@ app = FastAPI(
     description="Zero-Trust Token-Optimal Autonomous Coding & Live-Verification Engine",
 )
 
-# Enable CORS for Next.js Mission Control Workbench
+# Enable CORS for the Next.js Mission Control Workbench. A wildcard origin with
+# credentials would let any site drive the action gate from a user's browser,
+# so allowed origins are explicit (comma-separated AEGIS_CORS_ORIGINS).
+CORS_ORIGINS = [
+    o.strip()
+    for o in os.getenv(
+        "AEGIS_CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"
+    ).split(",")
+    if o.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -110,11 +144,23 @@ freshness = FreshnessEngine()
 telemetry_hub = TelemetryBroadcaster()
 audit_ledger = TamperEvidentAuditLedger()
 stream_indexer = StreamingASTIndex(pruner=pruner)
+workspace = Workspace(WORKSPACE_ROOT)
 
 # Cumulative session tracking
 total_tokens_saved_cumulative: int = 0
 quarantined_actions_store: Dict[str, ActionApprovalRequest] = {}
 quarantined_diff_snapshots: Dict[str, Dict[str, Any]] = {}
+# Server-side record of exactly what was signed for each quarantined action:
+# action_id -> {"signed_payload": str, "expires_at": datetime}
+pending_action_signatures: Dict[str, Dict[str, Any]] = {}
+# Most recent run receipts, oldest evicted first.
+MAX_STORED_RECEIPTS = 100
+receipts_store: Dict[str, Dict[str, Any]] = {}
+# Action IDs whose approval has already been consumed (replay protection).
+consumed_action_ids: set = set()
+# Writes actually applied to the workspace, for byte-exact rollback:
+# action_id -> {"target_path", "original", "patched_digest"}
+applied_writes: Dict[str, Dict[str, Any]] = {}
 
 
 @app.get("/healthz")
@@ -147,7 +193,7 @@ async def get_telemetry():
         "cumulative_tokens_saved": total_tokens_saved_cumulative,
         "cumulative_cost_usd": round(total_spent, 6),
         "active_model_tier": ModelTier.TIER_2_FRONTIER.value,
-        "active_model": "claude-3-5-sonnet",
+        "active_model": model_registry.FRONTIER_MODEL,
         "remaining_budget_usd": round(remaining_budget, 6),
         "circuit_breaker_status": "OPEN" if cb_status.get("chaos_fault_code") else "CLOSED",
         "circuit_breaker_stats": cb_status,
@@ -178,13 +224,13 @@ async def inject_chaos(req: ChaosInjectRequest):
     audit_ledger.append_entry(
         event_type="CHAOS_INJECTED",
         actor="chaos_simulator",
-        payload={"status_code": req.status_code, "target_model": req.target_model or "claude-3-5-sonnet"},
+        payload={"status_code": req.status_code, "target_model": req.target_model or model_registry.FRONTIER_MODEL},
     )
 
     event = {
         "type": "CHAOS_INJECTED",
         "status_code": req.status_code,
-        "target_model": req.target_model or "primary (claude-3-5-sonnet)",
+        "target_model": req.target_model or f"primary ({model_registry.FRONTIER_MODEL})",
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
     await telemetry_hub.broadcast(event)
@@ -192,7 +238,7 @@ async def inject_chaos(req: ChaosInjectRequest):
     return {
         "status": "CHAOS_INJECTED",
         "status_code": req.status_code,
-        "target_model": req.target_model or "claude-3-5-sonnet",
+        "target_model": req.target_model or model_registry.FRONTIER_MODEL,
     }
 
 
@@ -272,6 +318,16 @@ async def orchestrate(req: OrchestrateRequest):
     elif req.budget_limit_usd is not None:
         ledger.sessions[session_id].session_limit_usd = req.budget_limit_usd
 
+    # Reject write targets outside the workspace before spending any tokens.
+    if (req.proposed_action or "").lower() in WRITE_ACTIONS and req.proposed_target:
+        try:
+            workspace.resolve(req.proposed_target)
+        except WorkspaceError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"TARGET_OUTSIDE_WORKSPACE: {exc}",
+            )
+
     # --------------------------------------------------------------------------
     # Step 1: Zero-Trust Code Privacy Scan & Air-Gap Taint Engine
     # --------------------------------------------------------------------------
@@ -328,6 +384,10 @@ async def orchestrate(req: OrchestrateRequest):
     pruned_tokens = 0
     context_chunks = []
     ast_nodes_output: List[Dict[str, Any]] = []
+    # Nodes the model may ask to expand, and those already shown in full.
+    expandable_nodes: List[Any] = []
+    full_node_ids: set = set()
+    layout_groups: List[Any] = []  # (nodes, selected_ids) per pruned source
 
     if resolved_repo and os.path.exists(resolved_repo):
         all_repo_nodes, delta_metrics = stream_indexer.index_repository(resolved_repo)
@@ -340,11 +400,7 @@ async def orchestrate(req: OrchestrateRequest):
 
         if all_repo_nodes:
             raw_tokens = sum(n.token_cost for n in all_repo_nodes)
-            prompt_words = set(re.findall(r"[A-Za-z0-9_]+", req.prompt))
-            node_names = {n.name for n in all_repo_nodes if n.node_type != "import"}
-            seed_symbols = [w for w in prompt_words if w in node_names]
-            if not seed_symbols and node_names:
-                seed_symbols = [list(node_names)[0]]
+            seed_symbols = pruner.select_seeds(req.prompt, all_repo_nodes)
 
             # Calibrate budget to ensure >= 70% compression (target ~25% baseline)
             calibrated_budget = min(req.max_token_budget, max(1200, int(raw_tokens * 0.25)))
@@ -353,6 +409,7 @@ async def orchestrate(req: OrchestrateRequest):
                 query=req.prompt,
                 seed_symbols=seed_symbols,
                 max_token_budget=calibrated_budget,
+                layout="cache" if req.cache_layout else "interleaved",
             )
             pruned_tokens = metrics["total_tokens"]
             tokens_saved = metrics["tokens_saved"]
@@ -360,6 +417,9 @@ async def orchestrate(req: OrchestrateRequest):
             context_chunks.append(hybrid_code)
 
             selected_ids = set(metrics.get("selected_node_ids", []))
+            layout_groups.append((all_repo_nodes, selected_ids))
+            expandable_nodes.extend(all_repo_nodes)
+            full_node_ids |= selected_ids
             for n in all_repo_nodes:
                 is_sel = (n.node_type == "import" or n.node_id in selected_ids)
                 ast_nodes_output.append({
@@ -382,23 +442,23 @@ async def orchestrate(req: OrchestrateRequest):
 
             try:
                 nodes = pruner.parse_source(fname, code)
-                prompt_words = re.findall(r"[A-Za-z0-9_]+", req.prompt)
-                node_names = {n.name for n in nodes}
-                seed_symbols = [w for w in prompt_words if w in node_names]
-                if not seed_symbols and nodes:
-                    seed_symbols = [nodes[0].name]
+                seed_symbols = pruner.select_seeds(req.prompt, nodes)
 
                 pruned_code, stats = pruner.prune_context(
                     nodes=nodes,
                     query=req.prompt,
                     seed_symbols=seed_symbols,
                     max_token_budget=min(400, max(150, f_raw // 4)),
+                    layout="cache" if req.cache_layout else "interleaved",
                 )
                 f_pruned = pruner.count_tokens(pruned_code)
                 pruned_tokens += f_pruned
                 context_chunks.append(f"# File: {fname}\n{pruned_code}")
 
                 sel_ids = set(stats.get("selected_node_ids", []))
+                layout_groups.append((nodes, sel_ids))
+                expandable_nodes.extend(nodes)
+                full_node_ids |= sel_ids
                 for n in nodes:
                     ast_nodes_output.append({
                         "node_id": n.node_id,
@@ -420,6 +480,54 @@ async def orchestrate(req: OrchestrateRequest):
         prompt_t = pruner.count_tokens(req.prompt)
         raw_tokens = prompt_t
         pruned_tokens = prompt_t
+
+    # --------------------------------------------------------------------------
+    # Context layout: build the exact messages before any budget check, so the
+    # pre-flight reservation and savings metrics use the tokens actually sent.
+    # --------------------------------------------------------------------------
+    assembled_context = "\n\n".join(context_chunks)
+    has_stubs = any(
+        n.node_type != "import" and n.node_id not in full_node_ids for n in expandable_nodes
+    )
+    system_prompt = "You are AEGIS-0, an institutional-grade token-optimal coding agent."
+    if has_stubs:
+        system_prompt += "\n" + EXPANSION_INSTRUCTIONS
+    prompt_cache: Dict[str, Any] = {"layout": "interleaved"}
+
+    if req.cache_layout and layout_groups:
+        # Stable, query-independent skeleton first (cacheable prefix);
+        # this request's selected bodies go with the question.
+        prefixes, suffixes = [], []
+        for group_nodes, group_selected in layout_groups:
+            p, sfx = pruner.build_cache_layout(group_nodes, group_selected)
+            prefixes.append(p)
+            if sfx:
+                suffixes.append(sfx)
+        skeleton = "\n\n".join(prefixes)
+        bodies = "\n\n".join(suffixes)
+        system_prompt += f"\nRepository skeleton (signatures; bodies omitted):\n{skeleton}"
+        user_content = (
+            f"Full source of the symbols most relevant to this request:\n{bodies}\n\nRequest: {req.prompt}"
+            if bodies else req.prompt
+        )
+        prefix_tokens = pruner.count_tokens(system_prompt)
+        # Count the context actually sent: the skeleton also carries the
+        # signatures of symbols whose full bodies are in the suffix.
+        pruned_tokens = pruner.count_tokens(skeleton) + pruner.count_tokens(bodies)
+        prompt_cache = {
+            "layout": "skeleton_prefix",
+            "prefix_tokens": prefix_tokens,
+            "prefix_sha256": hashlib.sha256(system_prompt.encode("utf-8")).hexdigest(),
+        }
+    else:
+        if assembled_context:
+            system_prompt += f"\nRepository Context:\n{assembled_context}"
+        user_content = req.prompt
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_content},
+    ]
 
     tokens_saved = max(0, raw_tokens - pruned_tokens)
     compression_ratio = (
@@ -483,20 +591,6 @@ async def orchestrate(req: OrchestrateRequest):
     # --------------------------------------------------------------------------
     # Step 4: Bifrost Model Dispatch with Circuit-Breaker Failover
     # --------------------------------------------------------------------------
-    assembled_context = "\n\n".join(context_chunks)
-    messages = [
-        {
-            "role": "system",
-            "content": (
-                "You are AEGIS-0, an institutional-grade token-optimal coding agent.\n"
-                f"Repository Context:\n{assembled_context}"
-                if assembled_context
-                else "You are AEGIS-0, an institutional-grade token-optimal coding agent."
-            ),
-        },
-        {"role": "user", "content": req.prompt},
-    ]
-
     dispatch_res = await bifrost.dispatch(
         messages=messages,
         budget_remaining_usd=remaining_budget,
@@ -505,9 +599,95 @@ async def orchestrate(req: OrchestrateRequest):
     )
 
     # --------------------------------------------------------------------------
+    # Step 4b: On-Demand Symbol Expansion
+    # The model may ask for the bodies of stubbed symbols instead of guessing.
+    # Each round is budget-checked first and its cost committed to the ledger.
+    # --------------------------------------------------------------------------
+    expansions: List[Dict[str, Any]] = []
+    cached_tokens_total = 0
+    expansion_rounds = 0
+    expansion_skipped_reason: Optional[str] = None
+    turn_cost_usd = 0.0
+
+    while expansion_rounds < MAX_EXPANSION_ROUNDS and expandable_nodes:
+        requested = pruner.parse_expand_requests(dispatch_res.content, MAX_EXPANSIONS_PER_ROUND)
+        if not requested:
+            break
+        bodies = pruner.expand_symbols(
+            expandable_nodes, requested,
+            exclude_ids=full_node_ids | {e["node_id"] for e in expansions},
+        )
+        if not bodies:
+            expansion_skipped_reason = "UNKNOWN_OR_ALREADY_FULL"
+            break
+
+        body_tokens = sum(int(b["tokens"]) for b in bodies)
+        next_input = dispatch_res.prompt_tokens + dispatch_res.completion_tokens + body_tokens
+        # Settle the round that asked before deciding whether to pay for another.
+        ledger.commit_turn_cost(
+            session_id=session_id,
+            actual_input_tokens=dispatch_res.prompt_tokens,
+            actual_output_tokens=dispatch_res.completion_tokens,
+            tier=dispatch_res.tier,
+            cached_input_tokens=dispatch_res.cached_prompt_tokens,
+        )
+        turn_cost_usd += ledger._calculate_bound_cost(
+            dispatch_res.prompt_tokens, dispatch_res.completion_tokens, dispatch_res.tier,
+            dispatch_res.cached_prompt_tokens,
+        )
+        cached_tokens_total += dispatch_res.cached_prompt_tokens
+        if not ledger.can_afford(session_id, next_input, dispatch_res.tier):
+            expansion_skipped_reason = "BUDGET"
+            dispatch_res.prompt_tokens = 0
+            dispatch_res.completion_tokens = 0
+            break
+
+        expansion_text = "\n\n".join(
+            f"# ===== {b['symbol']} ({b['file_path']}) =====\n{b['source']}" for b in bodies
+        )
+        messages = messages + [
+            {"role": "assistant", "content": dispatch_res.content},
+            {"role": "user", "content": f"Requested symbol bodies:\n{expansion_text}\n\nNow answer the original request."},
+        ]
+        expansions.extend({k: b[k] for k in ("symbol", "node_id", "file_path", "tokens")} for b in bodies)
+        expansion_rounds += 1
+
+        state = ledger.get_session(session_id)
+        dispatch_res = await bifrost.dispatch(
+            messages=messages,
+            budget_remaining_usd=max(0.0, budget_cap - state.cumulative_cost_usd),
+            privacy_lock=airgap_locked,
+            target_tier=dispatch_res.tier,
+        )
+
+    expansion_tokens = sum(int(e["tokens"]) for e in expansions)
+    if expansion_tokens:
+        # Expanded bodies were sent to the model, so they don't count as saved.
+        total_tokens_saved_cumulative -= min(tokens_saved, expansion_tokens)
+        tokens_saved = max(0, tokens_saved - expansion_tokens)
+        compression_ratio = round(tokens_saved / raw_tokens, 4) if raw_tokens > 0 else 0.0
+        audit_ledger.append_entry(
+            event_type="CONTEXT_EXPANDED",
+            actor="orchestrator",
+            payload={
+                "session_id": session_id,
+                "symbols": [e["symbol"] for e in expansions],
+                "tokens": expansion_tokens,
+                "rounds": expansion_rounds,
+            },
+        )
+
+    # Strip any unanswered expansion requests so they are never treated as code.
+    if pruner.parse_expand_requests(dispatch_res.content):
+        dispatch_res.content = pruner.EXPAND_REQUEST.sub("", dispatch_res.content).strip()
+
+    # --------------------------------------------------------------------------
     # Step 5: Tavily Claims Extraction, Empirical Freshness & Auto-Patch (PS-06)
     # --------------------------------------------------------------------------
-    audit_res = freshness.audit_and_patch(dispatch_res.content)
+    pin_root = resolved_repo if resolved_repo and os.path.isdir(resolved_repo) else REPO_ROOT
+    audit_res = freshness.audit_and_patch(
+        dispatch_res.content, dependency_pins=parse_dependency_pins(pin_root)
+    )
     final_code = audit_res["patched_code"]
     original_code = (
         audit_res["original_code"] if audit_res["patches_applied"] else None
@@ -543,6 +723,7 @@ async def orchestrate(req: OrchestrateRequest):
         hmac_token = guard.generate_hmac_action_token(
             action_id=action_id, payload=hmac_payload, secret_key=AEGIS_SECRET_KEY
         )
+        expires_at = datetime.now(timezone.utc) + timedelta(seconds=ACTION_APPROVAL_TTL_SECONDS)
 
         action_quarantine = ActionApprovalRequest(
             action_id=action_id,
@@ -550,14 +731,34 @@ async def orchestrate(req: OrchestrateRequest):
             command_or_path=target_path,
             diff_payload=final_code,
             hmac_token=hmac_token,
+            signed_payload=hmac_payload,
+            expires_at=expires_at.isoformat(),
             is_quarantined=True,
             is_approved=False,
         )
         quarantined_actions_store[action_id] = action_quarantine
+        pending_action_signatures[action_id] = {
+            "signed_payload": hmac_payload,
+            "expires_at": expires_at,
+        }
+        file_original: Optional[str] = None
+        if category == ActionCategory.WRITE:
+            try:
+                file_original = workspace.read(target_path)
+            except WorkspaceError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"TARGET_OUTSIDE_WORKSPACE: {exc}",
+                )
         quarantined_diff_snapshots[action_id] = {
+            "category": category,
             "target_path": target_path,
+            # Pre-freshness-patch model output, for the UI's before/after diff.
             "original_code": original_code or "# Original baseline",
             "patched_code": final_code,
+            # The target file's real content when quarantined (None = new file).
+            "file_original": file_original,
+            "file_original_digest": Workspace.digest(file_original),
         }
         action_status = "QUARANTINED"
 
@@ -569,7 +770,12 @@ async def orchestrate(req: OrchestrateRequest):
         actual_input_tokens=dispatch_res.prompt_tokens,
         actual_output_tokens=dispatch_res.completion_tokens,
         tier=dispatch_res.tier,
+        cached_input_tokens=dispatch_res.cached_prompt_tokens,
     )
+    cached_tokens_total += dispatch_res.cached_prompt_tokens
+    if prompt_cache.get("layout") == "skeleton_prefix":
+        prompt_cache["cached_prompt_tokens"] = cached_tokens_total
+        prompt_cache["cache_hit"] = cached_tokens_total > 0
 
     updated_state = ledger.get_session(session_id)
     final_remaining_budget = max(
@@ -602,7 +808,7 @@ async def orchestrate(req: OrchestrateRequest):
         },
     )
 
-    return OrchestrateResponse(
+    response = OrchestrateResponse(
         session_id=session_id,
         status=action_status,
         model_used=dispatch_res.model,
@@ -615,10 +821,12 @@ async def orchestrate(req: OrchestrateRequest):
         tokens_saved=tokens_saved,
         compression_ratio=compression_ratio,
         cost_usd=round(
-            ledger._calculate_bound_cost(
+            turn_cost_usd
+            + ledger._calculate_bound_cost(
                 dispatch_res.prompt_tokens,
                 dispatch_res.completion_tokens,
                 dispatch_res.tier,
+                dispatch_res.cached_prompt_tokens,
             ),
             6,
         ),
@@ -630,59 +838,176 @@ async def orchestrate(req: OrchestrateRequest):
         freshness_verifications=freshness_verifications,
         action_quarantine=action_quarantine,
         ast_nodes=ast_nodes_output,
+        expansions=expansions,
+        expansion_tokens=expansion_tokens,
+        expansion_rounds=expansion_rounds,
+        expansion_skipped_reason=expansion_skipped_reason,
+        prompt_cache=prompt_cache,
     )
+
+    # Per-run token receipt (JSON + HTML via /api/receipts/{run_id}).
+    tier_pricing = ledger.pricing.get(dispatch_res.tier)
+    unpruned_extra = (
+        max(0, raw_tokens - pruned_tokens) * tier_pricing.input_per_mtok / 1_000_000.0
+        if tier_pricing else 0.0
+    )
+    bundle = audit_ledger.export_compliance_bundle()
+    receipt = build_receipt(
+        session_id=session_id,
+        prompt=req.prompt,
+        status=response.status,
+        model_used=response.model_used,
+        model_tier=response.model_tier.value,
+        failover_chain=response.failover_chain,
+        raw_tokens=raw_tokens,
+        context_tokens=pruned_tokens,
+        expansion_tokens=expansion_tokens,
+        cached_prompt_tokens=cached_tokens_total,
+        cost_usd=response.cost_usd,
+        unpruned_extra_cost_usd=unpruned_extra,
+        selected_symbols=[
+            n["name"] for n in ast_nodes_output if n["is_selected"] and n["node_type"] != "import"
+        ],
+        stubbed_count=sum(1 for n in ast_nodes_output if not n["is_selected"]),
+        expansions=[e["symbol"] for e in expansions],
+        freshness=freshness_verifications,
+        action=(
+            {
+                "action_id": action_quarantine.action_id,
+                "category": action_quarantine.category.value,
+                "target": action_quarantine.command_or_path,
+                "status": "QUARANTINED",
+            }
+            if action_quarantine else None
+        ),
+        privacy_tainted=privacy_tainted,
+        audit_head=bundle.get("latest_hash"),
+        audit_chain_valid=bundle.get("chain_valid"),
+    )
+    receipts_store[receipt["run_id"]] = receipt
+    while len(receipts_store) > MAX_STORED_RECEIPTS:
+        receipts_store.pop(next(iter(receipts_store)))
+    response.run_id = receipt["run_id"]
+    return response
 
 
 @app.post("/api/action/approve")
 async def approve_action(req: ActionApproveRequest):
     """
     Validates cryptographic HMAC-SHA256 signature and executes staged action.
-    Rejects any unverified or forged mutation payloads with HTTP 403 Forbidden.
-    """
-    secret = req.secret_key or AEGIS_SECRET_KEY
 
-    is_valid = guard.verify_action_token(
-        token=req.hmac_token,
-        action_id=req.action_id,
-        payload=req.payload,
-        secret_key=secret,
+    Zero-trust rules, all enforced server-side:
+    - Only actions this server quarantined can be approved (404 otherwise).
+    - Each approval is single-use (409 on replay).
+    - Approvals expire after AEGIS_ACTION_TTL_SECONDS (410 once expired).
+    - The HMAC is verified with the server secret only, and the payload must be
+      byte-identical to the one the server signed (403 otherwise).
+    """
+    if req.action_id in consumed_action_ids:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="ACTION_ALREADY_CONSUMED: This approval has already been used.",
+        )
+
+    pending = pending_action_signatures.get(req.action_id)
+    if pending is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="UNKNOWN_ACTION: No quarantined action with this ID.",
+        )
+
+    if datetime.now(timezone.utc) > pending["expires_at"]:
+        pending_action_signatures.pop(req.action_id, None)
+        audit_ledger.append_entry(
+            event_type="HMAC_REJECTED",
+            actor="action_gate",
+            payload={"action_id": req.action_id, "reason": "EXPIRED"},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="ACTION_EXPIRED: Approval window has closed; re-run the request.",
+        )
+
+    is_valid = (
+        hmac.compare_digest(
+            req.payload.encode("utf-8"), pending["signed_payload"].encode("utf-8")
+        )
+        and guard.verify_action_token(
+            token=req.hmac_token,
+            action_id=req.action_id,
+            payload=req.payload,
+            secret_key=AEGIS_SECRET_KEY,
+        )
     )
 
     if not is_valid:
+        audit_ledger.append_entry(
+            event_type="HMAC_REJECTED",
+            actor="action_gate",
+            payload={"action_id": req.action_id, "reason": "INVALID_SIGNATURE"},
+        )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="INVALID_HMAC_SIGNATURE: Action approval signature verification failed.",
         )
 
-    # Check store if present
-    if req.action_id in quarantined_actions_store:
-        item = quarantined_actions_store[req.action_id]
+    snap = quarantined_diff_snapshots[req.action_id]
+    is_write = snap.get("category") == ActionCategory.WRITE
+
+    # The diff was computed against the file as it was at quarantine time. If
+    # the file changed since, applying it would silently clobber those edits.
+    if is_write:
+        current = workspace.read(snap["target_path"])
+        if Workspace.digest(current) != snap["file_original_digest"]:
+            pending_action_signatures.pop(req.action_id, None)
+            audit_ledger.append_entry(
+                event_type="HMAC_REJECTED",
+                actor="action_gate",
+                payload={"action_id": req.action_id, "reason": "TARGET_CHANGED"},
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="TARGET_CHANGED: The target file changed after this action was quarantined; re-run the request.",
+            )
+
+    # Consume the approval before any side effects so it can never be replayed.
+    consumed_action_ids.add(req.action_id)
+    pending_action_signatures.pop(req.action_id, None)
+
+    item = quarantined_actions_store.get(req.action_id)
+    if item is not None:
         item.is_approved = True
         item.is_quarantined = False
 
-    # Record snapshot in audit ledger for atomic rollback
-    snap = quarantined_diff_snapshots.get(req.action_id)
-    if snap:
-        audit_ledger.record_diff_snapshot(
-            action_id=req.action_id,
-            target_path=snap["target_path"],
-            original_code=snap["original_code"],
-            patched_code=snap["patched_code"],
-            actor="user_operator",
-        )
-    else:
-        audit_ledger.record_diff_snapshot(
-            action_id=req.action_id,
-            target_path=req.target_path or "generated_patch.py",
-            original_code="# Original code baseline",
-            patched_code=req.diff_payload or req.payload,
-            actor="user_operator",
-        )
+    written_path: Optional[str] = None
+    if is_write:
+        workspace.write(snap["target_path"], snap["patched_code"])
+        written_path = workspace.relative(snap["target_path"])
+        applied_writes[req.action_id] = {
+            "target_path": snap["target_path"],
+            "original": snap["file_original"],
+            "patched_digest": Workspace.digest(snap["patched_code"]),
+        }
 
+    # Record snapshot in audit ledger for atomic rollback
+    audit_ledger.record_diff_snapshot(
+        action_id=req.action_id,
+        target_path=snap["target_path"],
+        original_code=snap["file_original"] if snap["file_original"] is not None else "",
+        patched_code=snap["patched_code"],
+        actor="user_operator",
+    )
+
+    exec_status = "EXECUTED" if is_write else "APPROVED"
     audit_ledger.append_entry(
         event_type="HMAC_APPROVED",
         actor="user_operator",
-        payload={"action_id": req.action_id, "status": "EXECUTED"},
+        payload={
+            "action_id": req.action_id,
+            "status": exec_status,
+            "written_path": written_path,
+            "content_sha256": Workspace.digest(snap["patched_code"]) if is_write else None,
+        },
     )
 
     approval_event = {
@@ -695,9 +1020,39 @@ async def approve_action(req: ActionApproveRequest):
     return {
         "approved": True,
         "action_id": req.action_id,
-        "status": "EXECUTED",
+        # Writes are applied to the workspace. Shell/git approvals are recorded
+        # but never executed by the orchestrator.
+        "status": exec_status,
+        "written_path": written_path,
+        "workspace_root": workspace.root if is_write else None,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+
+
+@app.get("/api/receipts")
+async def list_receipts():
+    """Most recent run receipts (newest first), summary fields only."""
+    return [
+        {
+            "run_id": r["run_id"],
+            "issued_at": r["issued_at"],
+            "status": r["status"],
+            "tokens_saved": r["tokens"]["saved"],
+            "cost_usd": r["cost_usd"]["actual"],
+        }
+        for r in reversed(list(receipts_store.values()))
+    ]
+
+
+@app.get("/api/receipts/{run_id}")
+async def get_receipt(run_id: str, format: str = "json"):
+    """A run's token receipt as JSON, or as a standalone HTML page with ?format=html."""
+    receipt = receipts_store.get(run_id)
+    if receipt is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="UNKNOWN_RUN")
+    if format == "html":
+        return HTMLResponse(render_html(receipt))
+    return receipt
 
 
 @app.get("/api/audit/export")
@@ -714,7 +1069,22 @@ async def rollback_action():
     Reverts the last approved diff snapshot in memory and logs a signed
     ACTION_ROLLED_BACK entry to the audit ledger.
     """
+    last = audit_ledger.peek_last_diff()
+    applied = applied_writes.get(last["action_id"]) if last else None
+    if applied is not None:
+        current = workspace.read(applied["target_path"])
+        if Workspace.digest(current) != applied["patched_digest"]:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="TARGET_MODIFIED_SINCE_APPLY: The file was edited after this action was applied; refusing to overwrite those edits.",
+            )
+
     rollback_res = audit_ledger.rollback_last_diff(actor="user_operator")
+    file_restored = False
+    if rollback_res and applied is not None:
+        workspace.restore(applied["target_path"], applied["original"])
+        applied_writes.pop(last["action_id"], None)
+        file_restored = True
     is_valid, msg = audit_ledger.verify_chain_integrity()
 
     if not rollback_res:
@@ -743,6 +1113,7 @@ async def rollback_action():
         "action_id": rollback_res["snapshot"]["action_id"],
         "target_path": rollback_res["snapshot"]["target_path"],
         "reverted_record": rollback_res["reverted_record"],
+        "file_restored": file_restored,
         "chain_valid": is_valid,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }

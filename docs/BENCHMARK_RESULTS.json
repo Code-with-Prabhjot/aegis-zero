@@ -1,44 +1,51 @@
 {
-  "timestamp_utc": "2026-11-19T16:16:49.266186+00:00",
+  "timestamp_utc": "2026-11-21T07:52:58.685045+00:00",
   "python_version": "3.14.3",
   "ast_pruning": {
     "modules": [
       {
         "module": "./orchestrator",
-        "raw_tokens": 18071,
-        "pruned_tokens": 4572,
-        "tokens_saved": 13499,
-        "compression_ratio": 0.747,
-        "compression_pct": 74.7,
+        "raw_tokens": 31601,
+        "pruned_tokens": 8093,
+        "tokens_saved": 23508,
+        "compression_ratio": 0.7439,
+        "compression_pct": 74.4,
         "ast_valid": true,
         "status": "SUB-OPTIMAL (<75%)"
       },
       {
         "module": "./security-gate",
-        "raw_tokens": 5178,
-        "pruned_tokens": 609,
-        "tokens_saved": 4569,
-        "compression_ratio": 0.8824,
-        "compression_pct": 88.2,
+        "raw_tokens": 5381,
+        "pruned_tokens": 1426,
+        "tokens_saved": 3955,
+        "compression_ratio": 0.735,
+        "compression_pct": 73.5,
         "ast_valid": true,
-        "status": "OPTIMAL (>=75%)"
+        "status": "SUB-OPTIMAL (<75%)"
       },
       {
         "module": "./tavily_freshness",
-        "raw_tokens": 4989,
-        "pruned_tokens": 425,
-        "tokens_saved": 4564,
-        "compression_ratio": 0.9148,
-        "compression_pct": 91.5,
+        "raw_tokens": 10487,
+        "pruned_tokens": 2696,
+        "tokens_saved": 7791,
+        "compression_ratio": 0.7429,
+        "compression_pct": 74.3,
         "ast_valid": true,
-        "status": "OPTIMAL (>=75%)"
+        "status": "SUB-OPTIMAL (<75%)"
       }
     ],
-    "total_raw_tokens": 28238,
-    "total_pruned_tokens": 5606,
-    "total_tokens_saved": 22632,
-    "average_compression_ratio": 0.8015,
-    "average_compression_pct": 80.1
+    "total_raw_tokens": 47469,
+    "total_pruned_tokens": 12215,
+    "total_tokens_saved": 35254,
+    "average_compression_ratio": 0.7427,
+    "average_compression_pct": 74.3
+  },
+  "retrieval_eval": {
+    "cases": 14,
+    "mean_recall": 0.9285714285714286,
+    "mean_recall_pct": 92.9,
+    "mean_compression": 0.737887145118684,
+    "mean_compression_pct": 73.8
   },
   "privacy_guard": {
     "total_vectors_tested": 7,
@@ -105,51 +112,47 @@
     "patches_syntactically_valid": 2,
     "claims": [
       {
-        "claim": "openai.ChatCompletion.create(model='gpt-4', messages=[...])",
+        "code": "import openai\nres = openai.ChatCompletion.create(model='gpt-4')",
         "expected_fresh": false,
-        "measured_status": "STALE",
-        "confidence_score": null,
+        "measured_fresh": false,
         "classification_correct": true,
         "patch_status": "VALID_AST_PATCH"
       },
       {
-        "claim": "from langchain.chat_models import ChatOpenAI",
+        "code": "from langchain.chat_models import ChatOpenAI",
         "expected_fresh": false,
-        "measured_status": "STALE",
-        "confidence_score": null,
+        "measured_fresh": false,
         "classification_correct": true,
         "patch_status": "VALID_AST_PATCH"
       },
       {
-        "claim": "client.chat.completions.create(model='gpt-4o', messages=[...])",
+        "code": "client.chat.completions.create(model='gpt-4o')",
         "expected_fresh": true,
-        "measured_status": "FRESH",
-        "confidence_score": null,
+        "measured_fresh": true,
         "classification_correct": true,
         "patch_status": null
       },
       {
-        "claim": "from langchain_openai import ChatOpenAI",
+        "code": "from langchain_openai import ChatOpenAI",
         "expected_fresh": true,
-        "measured_status": "FRESH",
-        "confidence_score": null,
+        "measured_fresh": true,
         "classification_correct": true,
         "patch_status": null
       },
       {
-        "claim": "stripe.Subscription.create(customer='cus_123')",
+        "code": "import stripe\nstripe.Subscription.create(customer='cus_123')",
         "expected_fresh": true,
-        "measured_status": "FRESH",
-        "confidence_score": null,
+        "measured_fresh": true,
         "classification_correct": true,
         "patch_status": null
       }
     ]
   },
   "summary": {
-    "token_reduction_pct": 80.1,
-    "total_tokens_evaluated": 28238,
-    "total_tokens_saved": 22632,
+    "token_reduction_pct": 74.3,
+    "retrieval_recall_at_budget_pct": 92.9,
+    "total_tokens_evaluated": 47469,
+    "total_tokens_saved": 35254,
     "red_team_containment_pct": 100.0,
     "freshness_accuracy_pct": 100.0,
     "failover_latency_sla_ms": "<180ms",

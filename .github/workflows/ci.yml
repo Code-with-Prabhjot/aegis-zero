@@ -1,61 +1,59 @@
-name: AEGIS-0 Continuous Integration
+name: CI
 
 on:
-  push:
-    branches: [ main ]
   pull_request:
-    branches: [ main ]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  backend-verification:
-    name: Backend Pytest & Verification Benchmarks
+  backend:
+    name: Backend tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
+    env:
+      AEGIS_PYPI_OFFLINE: "1"
+      TAVILY_API_KEY: mock
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
-          cache: 'pip'
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: orchestrator/requirements.txt
+      - name: Install dependencies
+        run: pip install -r orchestrator/requirements.txt
+      - name: Run test suite
+        run: python -m pytest tests -q
+      - name: Pruning benchmark + retrieval eval
+        run: python aegis_cli.py --benchmark
+      - name: Verify reproducible benchmark suite
+        run: python scripts/run_benchmarks.py
 
-      - name: Install Backend Dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r orchestrator/requirements.txt
-
-      - name: Run Pytest Verification Suite
-        run: |
-          python -m pytest tests/ -v
-
-      - name: Run Mathematical AST Pruning Benchmark
-        run: |
-          python aegis_cli.py --benchmark
-
-      - name: Verify Reproducible Benchmark Suite
-        run: |
-          python scripts/run_benchmarks.py
-
-  frontend-verification:
-    name: Mission Control Next.js Build & Typecheck
+  frontend:
+    name: Frontend type-check and build
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: mission-control
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js 20
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: 'npm'
+          node-version: "20"
+          cache: npm
           cache-dependency-path: mission-control/package-lock.json
-
-      - name: Install Frontend Dependencies
-        run: npm ci
-
-      - name: Typecheck & Build Next.js Workbench
-        run: npm run build
+      - run: npm ci
+      - run: npx tsc --noEmit -p .
+      - run: npm run build

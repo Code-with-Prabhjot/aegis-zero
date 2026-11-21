@@ -22,23 +22,23 @@ class ModelPricing(BaseModel):
     """
     input_per_mtok: float = Field(..., description="Cost in USD per 1M input tokens")
     output_per_mtok: float = Field(..., description="Cost in USD per 1M output tokens")
+    cache_read_per_mtok: Optional[float] = Field(
+        None, description="Cost per 1M prompt-cache read tokens (defaults to 0.1x input)"
+    )
+    cache_write_per_mtok: Optional[float] = Field(
+        None, description="Cost per 1M prompt-cache write tokens (defaults to 1.25x input)"
+    )
+
+    @property
+    def cache_read_rate(self) -> float:
+        return self.cache_read_per_mtok if self.cache_read_per_mtok is not None else 0.1 * self.input_per_mtok
+
+    @property
+    def cache_write_rate(self) -> float:
+        return self.cache_write_per_mtok if self.cache_write_per_mtok is not None else 1.25 * self.input_per_mtok
 
 
-# Default Pricing Registry
-DEFAULT_MODEL_PRICING: Dict[ModelTier, ModelPricing] = {
-    ModelTier.TIER_2_FRONTIER: ModelPricing(
-        input_per_mtok=3.00,
-        output_per_mtok=15.00
-    ),
-    ModelTier.TIER_1_MICRO: ModelPricing(
-        input_per_mtok=0.25,
-        output_per_mtok=1.25
-    ),
-    ModelTier.TIER_0_LOCAL: ModelPricing(
-        input_per_mtok=0.00,
-        output_per_mtok=0.00
-    ),
-}
+# Per-tier prices and model IDs live in orchestrator/model_registry.py.
 
 
 class ASTNode(BaseModel):
@@ -48,13 +48,15 @@ class ASTNode(BaseModel):
     """
     node_id: str
     name: str
-    node_type: str  # "function" | "class" | "import"
+    node_type: str  # "function" | "class" | "method" | "constant" | "statement" | "import" | "fallback"
     file_path: str
     raw_source: str
     stub_source: str
     token_cost: int
     stub_token_cost: int
     dependencies: List[str] = Field(default_factory=list)
+    # node_id of the enclosing class for methods; None for top-level symbols
+    parent_id: Optional[str] = None
 
 
 class BudgetState(BaseModel):
@@ -99,6 +101,8 @@ class ActionApprovalRequest(BaseModel):
     command_or_path: str
     diff_payload: Optional[str] = None
     hmac_token: str
+    signed_payload: Optional[str] = None
+    expires_at: Optional[str] = None
     is_quarantined: bool = True
     is_approved: bool = False
 
@@ -138,6 +142,8 @@ class BifrostCompletionResponse(BaseModel):
     failover_chain: List[str] = Field(default_factory=list)
     latency_ms: float = 0.0
     cached: bool = False
+    # Prompt tokens served from the provider's prefix cache (billed at the cache-read rate)
+    cached_prompt_tokens: int = 0
 
 
 class FreshnessClaimVerification(BaseModel):
@@ -171,6 +177,8 @@ class OrchestrateRequest(BaseModel):
     budget_limit_usd: Optional[float] = None
     proposed_action: Optional[str] = None  # e.g., "write_file", "apply_diff", "exec_shell", "read_file"
     proposed_target: Optional[str] = None
+    # Put the query-independent skeleton first so providers can cache it.
+    cache_layout: bool = True
 
 
 class OrchestrateResponse(BaseModel):
@@ -178,6 +186,8 @@ class OrchestrateResponse(BaseModel):
     Master response payload from AEGIS-0 Orchestrator.
     """
     session_id: str
+    # Fetch the run's token receipt at /api/receipts/{run_id}
+    run_id: Optional[str] = None
     status: str  # "SUCCESS" | "QUARANTINED" | "HALTED"
     model_used: str
     model_tier: ModelTier
@@ -198,6 +208,13 @@ class OrchestrateResponse(BaseModel):
     action_quarantine: Optional[ActionApprovalRequest] = None
     recovery_checkpoint: Optional[Dict[str, Any]] = None
     ast_nodes: List[Dict[str, Any]] = Field(default_factory=list)
+    # On-demand expansion of stubbed symbols requested by the model
+    expansions: List[Dict[str, Any]] = Field(default_factory=list)
+    expansion_tokens: int = 0
+    expansion_rounds: int = 0
+    expansion_skipped_reason: Optional[str] = None
+    # Cache-friendly layout: stable skeleton prefix + per-query bodies
+    prompt_cache: Dict[str, Any] = Field(default_factory=dict)
 
 
 class RedTeamRequest(BaseModel):
@@ -236,4 +253,3 @@ class ActionApproveRequest(BaseModel):
     payload: str
     target_path: Optional[str] = None
     diff_payload: Optional[str] = None
-    secret_key: Optional[str] = None

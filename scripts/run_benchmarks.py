@@ -31,6 +31,7 @@ from orchestrator.ast_pruner import ASTPruner
 from orchestrator.pathway_stream import StreamingASTIndex
 from privacy_guard import PrivacyGuard
 from freshness_engine import FreshnessEngine
+from evals.pruning_eval import run_eval
 
 
 def run_ast_benchmarks() -> Dict[str, Any]:
@@ -57,10 +58,7 @@ def run_ast_benchmarks() -> Dict[str, Any]:
             continue
 
         raw_t = sum(n.token_cost for n in nodes)
-        node_names = {n.name for n in nodes if n.node_type != "import"}
-        words = sorted(list(set(re.findall(r"[A-Za-z0-9_]+", query))))
-        matching_seeds = [w for w in words if w in node_names]
-        seeds = matching_seeds or sorted(list(node_names))[:1]
+        seeds = pruner.select_seeds(query, nodes)
 
         budget = min(8000, max(1200, int(raw_t * 0.25)))
         hybrid_code, stats = pruner.prune_context(
@@ -170,14 +168,14 @@ def run_privacy_benchmarks() -> Dict[str, Any]:
 
 
 def run_freshness_benchmarks() -> Dict[str, Any]:
-    engine = FreshnessEngine()
+    engine = FreshnessEngine(tavily_api_key="mock")
 
     test_claims = [
-        ("openai.ChatCompletion.create(model='gpt-4', messages=[...])", False),
+        ("import openai\nres = openai.ChatCompletion.create(model='gpt-4')", False),
         ("from langchain.chat_models import ChatOpenAI", False),
-        ("client.chat.completions.create(model='gpt-4o', messages=[...])", True),
+        ("client.chat.completions.create(model='gpt-4o')", True),
         ("from langchain_openai import ChatOpenAI", True),
-        ("stripe.Subscription.create(customer='cus_123')", True),
+        ("import stripe\nstripe.Subscription.create(customer='cus_123')", True),
     ]
 
     total = len(test_claims)
@@ -186,15 +184,14 @@ def run_freshness_benchmarks() -> Dict[str, Any]:
 
     results = []
     for claim_code, expected_fresh in test_claims:
-        v = engine.verify_claim_freshness(claim_code)
-        is_fresh = v.get("status") == "FRESH"
+        res = engine.audit_and_patch(claim_code)
+        is_fresh = res.get("all_fresh", True)
         is_correct = (is_fresh == expected_fresh)
         if is_correct:
             correct += 1
 
         patch_applied = None
         if not is_fresh:
-            res = engine.audit_and_patch(claim_code)
             patched = res.get("patched_code", "")
             try:
                 ast.parse(patched)
@@ -204,10 +201,9 @@ def run_freshness_benchmarks() -> Dict[str, Any]:
                 patch_applied = "SYNTAX_ERROR"
 
         results.append({
-            "claim": claim_code,
+            "code": claim_code,
             "expected_fresh": expected_fresh,
-            "measured_status": v.get("status"),
-            "confidence_score": v.get("confidence_score"),
+            "measured_fresh": is_fresh,
             "classification_correct": is_correct,
             "patch_status": patch_applied,
         })
@@ -230,6 +226,7 @@ def main():
     print("Executing live evaluation across repository modules...\n")
 
     ast_res = run_ast_benchmarks()
+    eval_results, eval_summary = run_eval()
     priv_res = run_privacy_benchmarks()
     fresh_res = run_freshness_benchmarks()
 
@@ -237,10 +234,18 @@ def main():
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "python_version": sys.version.split()[0],
         "ast_pruning": ast_res,
+        "retrieval_eval": {
+            "cases": eval_summary["cases"],
+            "mean_recall": eval_summary["mean_recall"],
+            "mean_recall_pct": round(eval_summary["mean_recall"] * 100, 1),
+            "mean_compression": eval_summary["mean_compression"],
+            "mean_compression_pct": round(eval_summary["mean_compression"] * 100, 1),
+        },
         "privacy_guard": priv_res,
         "freshness_engine": fresh_res,
         "summary": {
             "token_reduction_pct": ast_res["average_compression_pct"],
+            "retrieval_recall_at_budget_pct": round(eval_summary["mean_recall"] * 100, 1),
             "total_tokens_evaluated": ast_res["total_raw_tokens"],
             "total_tokens_saved": ast_res["total_tokens_saved"],
             "red_team_containment_pct": priv_res["containment_rate_pct"],
@@ -271,6 +276,11 @@ def main():
             f.write(f"| `{m['module']}` | {m['raw_tokens']:,} | {m['pruned_tokens']:,} | -{m['tokens_saved']:,} | **-{m['compression_pct']}%** | {m['status']} |\n")
         f.write(f"| **Overall Average** | **{ast_res['total_raw_tokens']:,}** | **{ast_res['total_pruned_tokens']:,}** | **-{ast_res['total_tokens_saved']:,}** | **-{ast_res['average_compression_pct']}%** | **VERIFIED** |\n\n")
 
+        f.write("### Retrieval Quality: Recall @ Token Budget\n\n")
+        f.write(f"- **Labelled Test Cases:** {eval_summary['cases']}\n")
+        f.write(f"- **Mean Recall @ Budget:** **{round(eval_summary['mean_recall'] * 100, 1)}%**\n")
+        f.write(f"- **Mean Compression on Cases:** **-{round(eval_summary['mean_compression'] * 100, 1)}%**\n\n")
+
         f.write("## 2. Zero-Trust Privacy Guard & Red-Team Containment\n\n")
         f.write(f"- **Attack Vectors Evaluated:** {priv_res['attack_vectors_count']}\n")
         f.write(f"- **Attack Vectors Blocked / Air-Gapped:** {priv_res['attack_vectors_blocked']}\n")
@@ -290,6 +300,11 @@ def main():
     print(f"[OK] Benchmark JSON generated at: {json_path}")
     print(f"[OK] Benchmark Markdown generated at: {md_path}")
     print("\nSummary Metrics:")
+    print(f"  ● Average Token Reduction: -{ast_res['average_compression_pct']}%")
+    print(f"  ● Mean Retrieval Recall @ Budget: {round(eval_summary['mean_recall'] * 100, 1)}%")
+    print(f"  ● Total Evaluated Tokens: {ast_res['total_raw_tokens']:,} raw -> {ast_res['total_pruned_tokens']:,} pruned")
+    print(f"  ● Red-Team Containment Rate: {priv_res['containment_rate_pct']}%")
+    print(f"  ● Freshness Accuracy: {fresh_res['accuracy_pct']}%")
     print(f"  ● Average Token Reduction: -{ast_res['average_compression_pct']}%")
     print(f"  ● Total Evaluated Tokens: {ast_res['total_raw_tokens']:,} raw -> {ast_res['total_pruned_tokens']:,} pruned")
     print(f"  ● Red-Team Containment Rate: {priv_res['containment_rate_pct']}%")

@@ -31,6 +31,7 @@ TAVILY_FRESHNESS_DIR = os.path.join(REPO_ROOT, "tavily_freshness")
 if TAVILY_FRESHNESS_DIR not in sys.path:
     sys.path.insert(0, TAVILY_FRESHNESS_DIR)
 
+from orchestrator import model_registry
 from orchestrator.schemas import (
     ModelTier,
     ActionCategory,
@@ -134,33 +135,33 @@ def test_bifrost_circuit_breaker_failover():
             {"role": "user", "content": "Write a high-performance Fibonacci generator."},
         ]
 
-        # Baseline call: Primary model (Claude 3.5 Sonnet) succeeds
+        # Baseline call: Primary model succeeds
         baseline_resp = await client.dispatch(messages=messages)
-        assert baseline_resp.model == "claude-3-5-sonnet"
+        assert baseline_resp.model == model_registry.FRONTIER_MODEL
         assert baseline_resp.failover_occurred is False
-        assert client.breakers["claude-3-5-sonnet"].state == CircuitBreakerState.CLOSED
+        assert client.breakers[model_registry.FRONTIER_MODEL].state == CircuitBreakerState.CLOSED
 
-        # Inject Chaos Fault: HTTP 429 on Claude 3.5 Sonnet
-        client.inject_chaos_fault(status_code=429, target_model="claude-3-5-sonnet")
+        # Inject Chaos Fault: HTTP 429 on Primary
+        client.inject_chaos_fault(status_code=429, target_model=model_registry.FRONTIER_MODEL)
 
-        # Dispatch: Should trip primary breaker and failover to GPT-4o in <180ms
+        # Dispatch: Should trip primary breaker and failover to secondary in <180ms
         failover_resp = await client.dispatch(messages=messages)
 
         # 1. Verification of target model switch to secondary
-        assert failover_resp.model == "gpt-4o", f"Expected secondary model gpt-4o, got {failover_resp.model}"
+        assert failover_resp.model == model_registry.FALLBACK_MODEL, f"Expected secondary model {model_registry.FALLBACK_MODEL}, got {failover_resp.model}"
         assert failover_resp.tier == ModelTier.TIER_2_FRONTIER
         assert failover_resp.failover_occurred is True
-        assert "claude-3-5-sonnet" in failover_resp.failover_chain
+        assert model_registry.FRONTIER_MODEL in failover_resp.failover_chain
 
         # 2. SLA Verification: Switch must occur in < 180 ms
         assert failover_resp.latency_ms < 180.0, f"Failover SLA breached: {failover_resp.latency_ms} ms >= 180 ms"
 
         # 3. State verification: Primary breaker must be OPEN
-        assert client.breakers["claude-3-5-sonnet"].state == CircuitBreakerState.OPEN
+        assert client.breakers[model_registry.FRONTIER_MODEL].state == CircuitBreakerState.OPEN
         assert len(client.failover_events) >= 1
         recent_event = client.failover_events[-1]
-        assert recent_event.from_model == "claude-3-5-sonnet"
-        assert recent_event.to_model == "gpt-4o"
+        assert recent_event.from_model == model_registry.FRONTIER_MODEL
+        assert recent_event.to_model == model_registry.FALLBACK_MODEL
         assert recent_event.status_code == 429
         assert recent_event.latency_ms < 180.0
 
@@ -171,10 +172,10 @@ def test_bifrost_circuit_breaker_failover():
         # 5. Clear chaos fault and reset breakers
         client.clear_chaos_fault()
         client.reset_circuit_breakers()
-        assert client.breakers["claude-3-5-sonnet"].state == CircuitBreakerState.CLOSED
+        assert client.breakers[model_registry.FRONTIER_MODEL].state == CircuitBreakerState.CLOSED
 
         recovery_resp = await client.dispatch(messages=messages)
-        assert recovery_resp.model == "claude-3-5-sonnet"
+        assert recovery_resp.model == model_registry.FRONTIER_MODEL
         assert recovery_resp.failover_occurred is False
 
     asyncio.run(_run())
@@ -284,7 +285,7 @@ def test_end_to_end_orchestrate_pipeline():
     # 1. Status & Routing
     assert data["session_id"] == session_id
     assert data["status"] == "QUARANTINED"
-    assert data["model_used"] in ("claude-3-5-sonnet", "gpt-4o")
+    assert data["model_used"] in (model_registry.FRONTIER_MODEL, model_registry.FALLBACK_MODEL, "claude-opus-5-5", "gpt-5.6")
     assert data["model_tier"] == "tier-2-frontier"
     assert data["privacy_tainted"] is False
     assert data["airgap_locked"] is False
@@ -327,20 +328,27 @@ def test_action_approval_gate_lifecycle():
     a cryptographically valid HMAC-SHA256 signature, and execute cleanly when approved.
     """
     client = TestClient(app)
-    guard = PrivacyGuard()
+    bifrost.mock_mode = True
+    bifrost.clear_chaos_fault()
+    bifrost.reset_circuit_breakers()
 
-    action_id = "act_test_security_gate"
     file_path = "sensitive_service.py"
-    diff_payload = "def patched_security(): return True\n"
-    payload_hash = hashlib.sha256(diff_payload.encode("utf-8")).hexdigest()
-    hmac_payload = f"write:{file_path}:{payload_hash}"
-
-    # Generate legitimate HMAC token
-    valid_token = guard.generate_hmac_action_token(
-        action_id=action_id,
-        payload=hmac_payload,
-        secret_key=AEGIS_SECRET_KEY,
+    orch = client.post(
+        "/api/orchestrate",
+        json={
+            "session_id": "test_gate_lifecycle",
+            "prompt": "write security patch to sensitive_service.py",
+            "proposed_action": "write_file",
+            "proposed_target": file_path,
+        },
     )
+    assert orch.status_code == 200
+    quarantine = orch.json()["action_quarantine"]
+    action_id = quarantine["action_id"]
+    valid_token = quarantine["hmac_token"]
+    hmac_payload = quarantine["signed_payload"]
+    payload_hash = hashlib.sha256(orch.json()["generated_code"].encode("utf-8")).hexdigest()
+    assert hmac_payload == f"write:{file_path}:{payload_hash}"
 
     # 1. Negative Test: Forged / Tampered HMAC signature must return 403 Forbidden
     forged_token = "deadbeef" * 8

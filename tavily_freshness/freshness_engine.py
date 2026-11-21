@@ -5,11 +5,26 @@ via Equation 5, and self-healing auto-patch generation for deprecated SDK patter
 """
 
 import ast
+import concurrent.futures
 import math
 import os
 import re
+import sys
+import time
 from typing import Dict, List, Optional, Any, Tuple
 import httpx
+
+try:
+    from package_metadata import (
+        PyPIMetadata, distribution_for, major_version, normalize, parse_dependency_pins,
+    )
+except ImportError:  # imported as part of the tavily_freshness package
+    from .package_metadata import (  # type: ignore
+        PyPIMetadata, distribution_for, major_version, normalize, parse_dependency_pins,
+    )
+
+# Modules that ship with Python; calls into these are never freshness claims.
+_STDLIB_MODULES = set(getattr(sys, "stdlib_module_names", ())) | {"__future__"}
 
 
 class FreshnessEngine:
@@ -29,6 +44,7 @@ class FreshnessEngine:
     KNOWN_DEPRECATIONS: Dict[str, Dict[str, Any]] = {
         "openai.ChatCompletion.create": {
             "library": "openai",
+            "deprecated_in": "1.0.0",
             "deprecated_pattern": "openai.ChatCompletion.create",
             "replacement_pattern": "client.chat.completions.create",
             "delta_t_days": 850.0,
@@ -47,6 +63,7 @@ class FreshnessEngine:
         },
         "openai.Completion.create": {
             "library": "openai",
+            "deprecated_in": "1.0.0",
             "deprecated_pattern": "openai.Completion.create",
             "replacement_pattern": "client.completions.create",
             "delta_t_days": 850.0,
@@ -64,6 +81,7 @@ class FreshnessEngine:
         },
         "langchain.chat_models": {
             "library": "langchain",
+            "deprecated_in": "0.1.0",
             "deprecated_pattern": "from langchain.chat_models import ChatOpenAI",
             "replacement_pattern": "from langchain_openai import ChatOpenAI",
             "delta_t_days": 550.0,
@@ -80,6 +98,7 @@ class FreshnessEngine:
         },
         "langchain.llms": {
             "library": "langchain",
+            "deprecated_in": "0.1.0",
             "deprecated_pattern": "from langchain.llms import OpenAI",
             "replacement_pattern": "from langchain_openai import OpenAI",
             "delta_t_days": 550.0,
@@ -112,6 +131,7 @@ class FreshnessEngine:
         },
         "pydantic.BaseModel.parse_obj": {
             "library": "pydantic",
+            "deprecated_in": "2.0.0",
             "deprecated_pattern": ".parse_obj(",
             "replacement_pattern": ".model_validate(",
             "delta_t_days": 600.0,
@@ -128,6 +148,7 @@ class FreshnessEngine:
         },
         "pydantic.BaseModel.dict": {
             "library": "pydantic",
+            "deprecated_in": "2.0.0",
             "deprecated_pattern": ".dict()",
             "replacement_pattern": ".model_dump()",
             "delta_t_days": 600.0,
@@ -144,6 +165,7 @@ class FreshnessEngine:
         },
         "pandas.DataFrame.append": {
             "library": "pandas",
+            "deprecated_in": "2.0.0",
             "deprecated_pattern": ".append(",
             "replacement_pattern": "pd.concat([",
             "delta_t_days": 650.0,
@@ -160,94 +182,212 @@ class FreshnessEngine:
         },
     }
 
-    def __init__(self, tavily_api_key: Optional[str] = None):
+    # Leaf names too generic to count as evidence that a search result is about a claim.
+    _GENERIC_SEGMENTS = {
+        "create", "get", "run", "call", "list", "update", "delete", "new", "init",
+        "load", "dump", "dumps", "loads", "read", "write", "open", "close", "send",
+    }
+
+    # Deprecation language in documentation / changelogs. Word stems use \w* so
+    # "deprecated", "deprecation", "deprecates" all match.
+    _DEPRECATION_EVIDENCE = re.compile(
+        r"\b(deprecat\w*|breaking changes?|superseded|removed in|"
+        r"no longer (?:supported|available|maintained)|end[- ]of[- ]life)\b",
+        re.IGNORECASE,
+    )
+
+    # Fallback patterns used only when generated code does not parse. They are
+    # fully qualified so they cannot collide with builtins or unrelated methods.
+    _FALLBACK_PATTERNS = [
+        (r"\bopenai\.ChatCompletion\.create\b", "openai.ChatCompletion.create", "openai", "sdk_method"),
+        (r"\bopenai\.Completion\.create\b", "openai.Completion.create", "openai", "sdk_method"),
+        (r"\bstripe\.Charge\.create\b", "stripe.Charge.create", "stripe", "sdk_method"),
+        (r"from\s+langchain\.chat_models\s+import\s+\w+", "langchain.chat_models", "langchain", "import_from"),
+        (r"from\s+langchain\.llms\s+import\s+\w+", "langchain.llms", "langchain", "import_from"),
+    ]
+
+    LIVE_CACHE_TTL_SECONDS = 24 * 3600
+
+    # Each major version a pinned dependency is behind latest lowers A_semantic
+    # by this much: one major behind is a warning, two or more turns STALE.
+    MAJOR_VERSION_AGREEMENT_PENALTY = 0.10
+
+    def __init__(
+        self,
+        tavily_api_key: Optional[str] = None,
+        package_metadata: Optional[PyPIMetadata] = None,
+    ):
         self.tavily_api_key = tavily_api_key or os.getenv("TAVILY_API_KEY")
+        self.pypi = package_metadata or PyPIMetadata()
+        # claim -> (fetched_at_epoch, live_result). Avoids spending Tavily
+        # credits re-verifying the same API on every turn.
+        self._live_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+        self.live_queries_made = 0
+        self.live_cache_hits = 0
+
+    # ------------------------------------------------------------------
+    # Claim extraction
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _strip_fences(generated_code: str) -> str:
+        fence_match = re.search(r"```(?:python)?(.*?)```", generated_code, re.DOTALL)
+        if fence_match:
+            return fence_match.group(1).strip()
+        return generated_code
+
+    @staticmethod
+    def _is_third_party(module: str) -> bool:
+        root = module.split(".")[0]
+        return bool(root) and root not in _STDLIB_MODULES
+
+    def _build_import_map(self, tree: ast.AST) -> Dict[str, str]:
+        """
+        Maps each locally bound name to the fully qualified third-party object it
+        refers to, e.g. {"pd": "pandas", "ChatOpenAI": "langchain.chat_models.ChatOpenAI"}.
+        Stdlib and relative imports are ignored.
+        """
+        aliases: Dict[str, str] = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if not self._is_third_party(alias.name):
+                        continue
+                    if alias.asname:
+                        aliases[alias.asname] = alias.name
+                    else:
+                        root = alias.name.split(".")[0]
+                        aliases[root] = root
+            elif isinstance(node, ast.ImportFrom):
+                if node.level or not node.module or not self._is_third_party(node.module):
+                    continue
+                for alias in node.names:
+                    if alias.name == "*":
+                        continue
+                    aliases[alias.asname or alias.name] = f"{node.module}.{alias.name}"
+        return aliases
+
+    def _qualify_call(self, func: ast.AST, aliases: Dict[str, str]) -> Optional[str]:
+        """
+        Resolves a call target to a fully qualified name if (and only if) its root
+        name was imported from a third-party package.
+        """
+        dotted = self._resolve_call_name(func)
+        if not dotted:
+            return None
+        root, _, rest = dotted.partition(".")
+        if root not in aliases:
+            return None
+        return f"{aliases[root]}.{rest}" if rest else aliases[root]
+
+    def _dataframe_names(self, tree: ast.AST, aliases: Dict[str, str]) -> set:
+        """
+        Names bound to pandas DataFrames: assigned from a pandas call
+        (pd.DataFrame, pd.read_csv, pd.concat, ...) or annotated as DataFrame.
+        """
+        names = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
+                q = self._qualify_call(node.value.func, aliases)
+                if q and q.startswith("pandas."):
+                    for t in node.targets:
+                        if isinstance(t, ast.Name):
+                            names.add(t.id)
+            elif isinstance(node, ast.arg) and node.annotation is not None:
+                ann = ast.unparse(node.annotation)
+                if ann.endswith("DataFrame"):
+                    names.add(node.arg)
+        return names
+
+    def _find_method_sites(self, tree: ast.AST, aliases: Dict[str, str]) -> List[Dict[str, Any]]:
+        """
+        Locates receiver-method calls whose deprecation can only be inferred from
+        context (no type information): pydantic V1 methods when pydantic is
+        imported, and DataFrame.append on names known to hold DataFrames.
+        """
+        imported_roots = {v.split(".")[0] for v in aliases.values()}
+        df_names = self._dataframe_names(tree, aliases) if "pandas" in imported_roots else set()
+        sites: List[Dict[str, Any]] = []
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+                continue
+            attr = node.func.attr
+            receiver = node.func.value
+            if "pydantic" in imported_roots:
+                if attr == "parse_obj":
+                    sites.append({"kind": "pydantic.BaseModel.parse_obj", "node": node})
+                    continue
+                if attr == "dict" and not node.args and not node.keywords:
+                    sites.append({"kind": "pydantic.BaseModel.dict", "node": node})
+                    continue
+            if attr == "append" and isinstance(receiver, ast.Name) and receiver.id in df_names:
+                sites.append({"kind": "pandas.DataFrame.append", "node": node})
+        return sites
 
     def extract_code_claims(self, generated_code: str) -> List[Dict[str, Any]]:
         """
-        Parses generated code via AST/regex to identify third-party library imports,
-        SDK method calls, and versioned APIs.
+        Identifies third-party library imports and SDK calls in generated code.
+
+        Only names that resolve to a third-party import become claims, so
+        builtins (print, len, dict) and stdlib calls are never flagged or sent
+        to Tavily. Falls back to fully qualified regex patterns if the code
+        does not parse.
         """
         claims: List[Dict[str, Any]] = []
         if not generated_code:
             return claims
 
-        # Strip markdown fences if present
-        clean_code = generated_code
-        fence_match = re.search(r"```(?:python)?(.*?)```", generated_code, re.DOTALL)
-        if fence_match:
-            clean_code = fence_match.group(1).strip()
+        clean_code = self._strip_fences(generated_code)
+        seen: set = set()
 
-        # 1. AST Parsing
-        ast_parsed = False
+        def add(claim: str, library: str, c_type: str, raw: str, line: int) -> None:
+            if claim in seen:
+                return
+            seen.add(claim)
+            claims.append({
+                "claim": claim,
+                "library": library,
+                "type": c_type,
+                "raw_match": raw,
+                "line_number": line,
+            })
+
         try:
             tree = ast.parse(clean_code)
-            ast_parsed = True
-
-            # Walk AST to extract imports and calls
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Import):
-                    for alias in node.names:
-                        claims.append({
-                            "claim": alias.name,
-                            "library": alias.name.split(".")[0],
-                            "type": "import",
-                            "raw_match": f"import {alias.name}",
-                            "line_number": getattr(node, "lineno", 1),
-                        })
-                elif isinstance(node, ast.ImportFrom):
-                    mod = node.module or ""
-                    for alias in node.names:
-                        full_name = f"{mod}.{alias.name}" if mod else alias.name
-                        claims.append({
-                            "claim": full_name,
-                            "library": mod.split(".")[0] if mod else alias.name,
-                            "type": "import_from",
-                            "raw_match": f"from {mod} import {alias.name}",
-                            "line_number": getattr(node, "lineno", 1),
-                        })
-                elif isinstance(node, ast.Call):
-                    # Extract dotted method call expressions, e.g. openai.ChatCompletion.create
-                    func_expr = self._resolve_call_name(node.func)
-                    if func_expr:
-                        root_lib = func_expr.split(".")[0]
-                        claims.append({
-                            "claim": func_expr,
-                            "library": root_lib,
-                            "type": "sdk_method",
-                            "raw_match": func_expr,
-                            "line_number": getattr(node, "lineno", 1),
-                        })
         except SyntaxError:
-            ast_parsed = False
+            for pattern, claim_id, lib, c_type in self._FALLBACK_PATTERNS:
+                m = re.search(pattern, clean_code)
+                if m:
+                    add(claim_id, lib, c_type, m.group(0), clean_code[: m.start()].count("\n") + 1)
+            return claims
 
-        # 2. Regex Pattern Matching (Supplemental & Fallback)
-        regex_patterns = [
-            (r"\bopenai\.ChatCompletion\.create\b", "openai.ChatCompletion.create", "openai", "sdk_method"),
-            (r"\bopenai\.Completion\.create\b", "openai.Completion.create", "openai", "sdk_method"),
-            (r"\bclient\.chat\.completions\.create\b", "client.chat.completions.create", "openai", "sdk_method"),
-            (r"\bstripe\.Charge\.create\b", "stripe.Charge.create", "stripe", "sdk_method"),
-            (r"\bstripe\.PaymentIntent\.create\b", "stripe.PaymentIntent.create", "stripe", "sdk_method"),
-            (r"from\s+langchain\.chat_models\s+import\s+([A-Za-z0-9_]+)", "langchain.chat_models", "langchain", "import_from"),
-            (r"from\s+langchain\.llms\s+import\s+([A-Za-z0-9_]+)", "langchain.llms", "langchain", "import_from"),
-            (r"\bparse_obj\(", "pydantic.BaseModel.parse_obj", "pydantic", "sdk_method"),
-            (r"\.dict\(", "pydantic.BaseModel.dict", "pydantic", "sdk_method"),
-            (r"\.append\(", "pandas.DataFrame.append", "pandas", "sdk_method"),
-        ]
+        aliases = self._build_import_map(tree)
 
-        seen_claims = {c["claim"] for c in claims}
-        for pattern, claim_id, lib, c_type in regex_patterns:
-            matches = list(re.finditer(pattern, clean_code))
-            for m in matches:
-                if claim_id not in seen_claims:
-                    seen_claims.add(claim_id)
-                    claims.append({
-                        "claim": claim_id,
-                        "library": lib,
-                        "type": c_type,
-                        "raw_match": m.group(0),
-                        "line_number": clean_code[: m.start()].count("\n") + 1,
-                    })
+        nodes = sorted(
+            (n for n in ast.walk(tree) if hasattr(n, "lineno")),
+            key=lambda n: (n.lineno, n.col_offset),
+        )
+        for node in nodes:
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if self._is_third_party(alias.name):
+                        add(alias.name, alias.name.split(".")[0], "import",
+                            f"import {alias.name}", node.lineno)
+            elif isinstance(node, ast.ImportFrom):
+                if node.level or not node.module or not self._is_third_party(node.module):
+                    continue
+                for alias in node.names:
+                    add(f"{node.module}.{alias.name}", node.module.split(".")[0], "import_from",
+                        f"from {node.module} import {alias.name}", node.lineno)
+            elif isinstance(node, ast.Call):
+                qualified = self._qualify_call(node.func, aliases)
+                if qualified:
+                    add(qualified, qualified.split(".")[0], "sdk_method",
+                        self._resolve_call_name(node.func) or qualified, node.lineno)
+
+        for site in self._find_method_sites(tree, aliases):
+            node = site["node"]
+            add(site["kind"], site["kind"].split(".")[0], "sdk_method",
+                ast.get_source_segment(clean_code, node.func) or site["kind"], node.lineno)
 
         return claims
 
@@ -261,9 +401,12 @@ class FreshnessEngine:
             base = self._resolve_call_name(node.value)
             if base:
                 return f"{base}.{node.attr}"
-            return node.attr
+            return None
         return None
 
+    # ------------------------------------------------------------------
+    # Scoring
+    # ------------------------------------------------------------------
     def calculate_empirical_freshness(
         self,
         delta_t_days: float,
@@ -280,41 +423,133 @@ class FreshnessEngine:
         term_deprecation = self.W3 * (1.0 if deprecation_indicator else 0.0)
 
         raw_score = 100.0 * (term_time + term_agreement - term_deprecation)
-        # Bounded between [0, 100]
         return max(0.0, min(100.0, raw_score))
 
+    def match_known_deprecation(self, claim: str) -> Optional[Dict[str, Any]]:
+        """
+        Exact registry lookup: the claim must equal a registry key or be a
+        member of a deprecated module (key + "."). Substring matching is
+        deliberately avoided so "openai" or "dict" never match.
+        """
+        if claim in self.KNOWN_DEPRECATIONS:
+            return self.KNOWN_DEPRECATIONS[claim]
+        for key, entry in self.KNOWN_DEPRECATIONS.items():
+            if claim.startswith(key + "."):
+                return entry
+        return None
+
+    def _has_live_key(self, api_key: Optional[str]) -> bool:
+        return bool(api_key) and not api_key.startswith("tvly-demo") and api_key != "mock"
+
+    def _cached_live_query(self, claim: str, api_key: str) -> Optional[Dict[str, Any]]:
+        now = time.time()
+        cached = self._live_cache.get(claim)
+        if cached and now - cached[0] < self.LIVE_CACHE_TTL_SECONDS:
+            self.live_cache_hits += 1
+            return cached[1]
+        try:
+            result = self._query_tavily_api(claim, api_key)
+        except Exception:
+            return None
+        self.live_queries_made += 1
+        self._live_cache[claim] = (now, result)
+        return result
+
+    def _ground_with_pypi(
+        self,
+        claim: str,
+        matched: Optional[Dict[str, Any]],
+        pins: Dict[str, str],
+    ) -> Tuple[Optional[float], float, Optional[Dict[str, Any]]]:
+        """
+        Uses real PyPI release dates to ground Equation 5's inputs.
+
+        Returns (delta_t_days or None, agreement_penalty, evidence or None):
+        - Known deprecation: Δt = days since the release that deprecated it
+          (how long the evidence of deprecation has stood).
+        - Pinned dependency: each major version behind latest lowers
+          A_semantic. The pin's age is reported as evidence but not used as Δt:
+          Equation 5 treats Δt as documentation age, and a pin's age would
+          mark nearly every pinned dependency stale.
+        """
+        library = claim.split(".")[0]
+        dist = distribution_for(library)
+        meta = self.pypi.package(dist)
+        if not meta:
+            return None, 0.0, None
+
+        latest = meta.get("latest_version")
+        latest_release = meta.get("latest_release")
+        evidence: Dict[str, Any] = {
+            "source": "pypi",
+            "package": meta.get("name", dist),
+            "url": f"https://pypi.org/project/{dist}/",
+            "latest_version": latest,
+            "latest_release": latest_release.date().isoformat() if latest_release else None,
+        }
+        delta: Optional[float] = None
+        penalty = 0.0
+        pinned = pins.get(normalize(dist))
+        if pinned:
+            evidence["pinned_version"] = pinned
+
+        deprecated_in = (matched or {}).get("deprecated_in")
+        if deprecated_in:
+            released = meta["release_dates"].get(deprecated_in)
+            if released:
+                delta = self.pypi.days_between(released)
+                evidence["deprecated_in"] = deprecated_in
+                evidence["deprecated_since"] = released.date().isoformat()
+                pinned_major, dep_major = major_version(pinned), major_version(deprecated_in)
+                if pinned_major is not None and dep_major is not None and pinned_major < dep_major:
+                    evidence["note"] = (
+                        f"Pinned {dist} {pinned} predates the deprecation; "
+                        f"applying the patch requires upgrading to >= {deprecated_in}."
+                    )
+        elif pinned:
+            pinned_release = meta["release_dates"].get(pinned)
+            if pinned_release and latest_release:
+                evidence["pinned_release"] = pinned_release.date().isoformat()
+                evidence["pinned_behind_latest_days"] = round(
+                    self.pypi.days_between(pinned_release, latest_release), 1
+                )
+            behind = max(0, (major_version(latest) or 0) - (major_version(pinned) or 0))
+            evidence["major_versions_behind"] = behind
+            penalty = self.MAJOR_VERSION_AGREEMENT_PENALTY * behind
+
+        return delta, penalty, evidence
+
     def verify_claim_freshness(
-        self, claim: str, tavily_api_key: Optional[str] = None
+        self,
+        claim: str,
+        tavily_api_key: Optional[str] = None,
+        dependency_pins: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         """
-        Queries Tavily Search API or evaluates against deterministic local heuristics.
-        Computes F(c_j) using Equation 5. If F(c_j) < 70, marks as STALE and
-        generates a self-healing replacement patch.
+        Queries Tavily Search API (cached) or evaluates against the curated
+        deprecation registry. Computes F(c_j) using Equation 5. If F(c_j) < 70,
+        marks as STALE and attaches a self-healing replacement patch.
         """
         api_key = tavily_api_key or self.tavily_api_key
+        matched_deprecation = self.match_known_deprecation(claim)
 
-        # 1. Check if claim matches known deprecation registry
-        matched_deprecation = None
-        for key, entry in self.KNOWN_DEPRECATIONS.items():
-            if key in claim or claim in key:
-                matched_deprecation = entry
-                break
-
-        # 2. Query Tavily Search API if a live non-demo key is available
+        # Registry hits are already verified deprecations; spend Tavily
+        # credits only on APIs the registry doesn't know about.
         live_result = None
-        if api_key and not api_key.startswith("tvly-demo") and api_key != "mock":
-            try:
-                live_result = self._query_tavily_api(claim, api_key)
-            except Exception:
-                live_result = None
+        if self._has_live_key(api_key) and not matched_deprecation:
+            live_result = self._cached_live_query(claim, api_key)
 
-        # 3. Determine telemetry metrics (Delta t, A_semantic, I_deprecation)
         if live_result:
             delta_t_days = live_result["delta_t_days"]
             semantic_agreement = live_result["semantic_agreement"]
             deprecation_indicator = live_result["deprecation_indicator"]
             doc_snippets = live_result["snippets"]
             sources = live_result["sources"]
+            # Curated registry evidence is authoritative when live search is ambiguous.
+            if matched_deprecation and not deprecation_indicator:
+                deprecation_indicator = matched_deprecation["deprecation_indicator"]
+                semantic_agreement = min(semantic_agreement, matched_deprecation["semantic_agreement"])
+                delta_t_days = max(delta_t_days, matched_deprecation["delta_t_days"])
         elif matched_deprecation:
             delta_t_days = matched_deprecation["delta_t_days"]
             semantic_agreement = matched_deprecation["semantic_agreement"]
@@ -328,7 +563,6 @@ class FreshnessEngine:
                 }
             ]
         else:
-            # Default heuristic for modern/standard APIs
             delta_t_days = 15.0
             semantic_agreement = 0.95
             deprecation_indicator = 0
@@ -341,7 +575,24 @@ class FreshnessEngine:
                 }
             ]
 
-        # 4. Compute Freshness Score F(c_j) via Equation 5
+        grounded_delta, agreement_penalty, evidence = self._ground_with_pypi(
+            claim, matched_deprecation, dependency_pins or {}
+        )
+        if grounded_delta is not None:
+            delta_t_days = round(grounded_delta, 1)
+        if agreement_penalty:
+            semantic_agreement = max(0.0, semantic_agreement - agreement_penalty)
+        if evidence:
+            sources = list(sources) + [{
+                "title": f"PyPI: {evidence['package']} {evidence.get('latest_version') or ''}".strip(),
+                "url": evidence["url"],
+                "snippet": (
+                    f"Deprecated in {evidence['deprecated_in']} (released {evidence['deprecated_since']})."
+                    if evidence.get("deprecated_in")
+                    else f"Latest release {evidence.get('latest_release')}."
+                ),
+            }]
+
         score = self.calculate_empirical_freshness(
             delta_t_days=delta_t_days,
             semantic_agreement=semantic_agreement,
@@ -351,11 +602,11 @@ class FreshnessEngine:
         is_stale = score < 70.0
         status = "STALE" if is_stale else "FRESH"
 
-        # 5. Auto-Patch Generation for STALE claims
         patch = None
         if is_stale:
             if matched_deprecation:
                 patch = {
+                    "claim": claim,
                     "deprecated_pattern": matched_deprecation["deprecated_pattern"],
                     "replacement_pattern": matched_deprecation["replacement_pattern"],
                     "diff": matched_deprecation["diff_pattern"],
@@ -363,11 +614,13 @@ class FreshnessEngine:
                     "documentation_snippet": matched_deprecation["documentation_snippets"][0],
                 }
             else:
+                # No verified replacement exists: report it, but never rewrite code blindly.
                 patch = {
+                    "claim": claim,
                     "deprecated_pattern": claim,
-                    "replacement_pattern": f"# [AUTO-PATCH] Update {claim} to modern SDK API",
-                    "diff": f"- {claim}\n+ # [UPDATED_API]: {claim}",
-                    "migration_guide": "API flagged as stale or deprecated by web search verification.",
+                    "replacement_pattern": None,
+                    "diff": None,
+                    "migration_guide": "API flagged as stale or deprecated by web search verification. Manual review required.",
                     "documentation_snippet": doc_snippets[0] if doc_snippets else "",
                 }
 
@@ -382,137 +635,285 @@ class FreshnessEngine:
             "sources": sources,
             "documentation_snippets": doc_snippets,
             "patch": patch,
+            "evidence": evidence,
         }
+
+    def _evidence_terms(self, claim: str) -> List[str]:
+        segments = [s for s in claim.split(".") if s]
+        specific = [s for s in segments[1:] if len(s) >= 4 and s.lower() not in self._GENERIC_SEGMENTS]
+        return [s.lower() for s in (specific or segments)]
 
     def _query_tavily_api(self, claim: str, api_key: str) -> Dict[str, Any]:
         """
-        Calls live Tavily Search API with advanced search depth.
+        Calls live Tavily Search API and scores per-result deprecation evidence.
+
+        A result only counts as evidence when it both mentions the claim's
+        specific identifiers and contains deprecation language, so generic
+        pages that say "legacy" somewhere don't mark a current API as stale.
         """
         endpoint = "https://api.tavily.com/search"
         payload = {
-            "api_key": api_key,
             "query": f"{claim} deprecated breaking change migration latest docs",
             "search_depth": "advanced",
             "max_results": 5,
         }
+        headers = {"Authorization": f"Bearer {api_key}"}
 
         with httpx.Client(timeout=5.0) as client:
-            res = client.post(endpoint, json=payload)
+            res = client.post(endpoint, json=payload, headers=headers)
             res.raise_for_status()
             data = res.json()
 
         results = data.get("results", [])
-        snippets = [r.get("content", "") for r in results if "content" in r]
-        all_text = " ".join(snippets).lower()
+        terms = self._evidence_terms(claim)
 
-        # Check for deprecation keywords
-        has_deprecations = bool(
-            re.search(
-                r"\b(deprecat|breaking change|superseded|legacy|removed in|migration guide|no longer supported)\b",
-                all_text,
-            )
-        )
+        evidence_snippets: List[str] = []
+        for r in results:
+            content = f"{r.get('title', '')} {r.get('content', '')}"
+            lowered = content.lower()
+            if any(t in lowered for t in terms) and self._DEPRECATION_EVIDENCE.search(content):
+                evidence_snippets.append(r.get("content", ""))
 
         sources = [
             {"title": r.get("title", ""), "url": r.get("url", ""), "snippet": r.get("content", "")[:180]}
             for r in results
         ]
+        snippets = [r.get("content", "") for r in results if r.get("content")]
 
-        if has_deprecations:
+        evidence_ratio = (len(evidence_snippets) / len(results)) if results else 0.0
+        deprecated = len(evidence_snippets) >= 2 or (results and evidence_ratio >= 0.4)
+
+        if deprecated:
             return {
                 "delta_t_days": 650.0,
-                "semantic_agreement": 0.20,
+                "semantic_agreement": round(max(0.05, 0.95 - evidence_ratio), 3),
                 "deprecation_indicator": 1,
-                "snippets": snippets[:3] if snippets else ["Deprecated in current API"],
+                "evidence_ratio": round(evidence_ratio, 3),
+                "snippets": evidence_snippets[:3] or ["Deprecated in current API"],
                 "sources": sources,
             }
-        else:
-            return {
-                "delta_t_days": 20.0,
-                "semantic_agreement": 0.95,
-                "deprecation_indicator": 0,
-                "snippets": snippets[:3] if snippets else ["Current API active"],
-                "sources": sources,
-            }
+        return {
+            "delta_t_days": 20.0,
+            "semantic_agreement": round(0.95 - 0.5 * evidence_ratio, 3),
+            "deprecation_indicator": 0,
+            "evidence_ratio": round(evidence_ratio, 3),
+            "snippets": snippets[:3] or ["Current API active"],
+            "sources": sources,
+        }
+
+    # ------------------------------------------------------------------
+    # Auto-patching
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _byte_offset(line_starts: List[int], lineno: int, col: int) -> int:
+        return line_starts[lineno - 1] + col
+
+    def _apply_byte_edits(self, code: str, edits: List[Tuple[int, int, str]]) -> str:
+        """Applies (start, end, replacement) edits on UTF-8 byte offsets, last first."""
+        data = code.encode("utf-8")
+        for start, end, repl in sorted(edits, key=lambda e: e[0], reverse=True):
+            data = data[:start] + repl.encode("utf-8") + data[end:]
+        return data.decode("utf-8")
+
+    @staticmethod
+    def _line_starts(code: str) -> List[int]:
+        starts, total = [], 0
+        for line in code.encode("utf-8").splitlines(keepends=True):
+            starts.append(total)
+            total += len(line)
+        starts.append(total)
+        return starts
+
+    def _patch_openai_v0(self, code: str, legacy_attr: str, modern_attr: str) -> str:
+        """
+        Rewrites openai.<legacy_attr>.create( calls to client.<modern_attr>.create(,
+        adding `from openai import OpenAI` and a `client = OpenAI()` in each
+        enclosing scope that uses it. `import openai` is kept so other
+        module-level usages keep working.
+        """
+        tree = ast.parse(code)
+        target = f"openai.{legacy_attr}.create"
+        scopes: Dict[int, ast.AST] = {}
+
+        def visit(node: ast.AST, scope: ast.AST) -> None:
+            for child in ast.iter_child_nodes(node):
+                child_scope = child if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) else scope
+                if isinstance(child, ast.Call) and self._resolve_call_name(child.func) == target:
+                    scopes[id(scope)] = scope
+                visit(child, child_scope)
+
+        visit(tree, tree)
+        if not scopes:
+            return code
+
+        lines = code.splitlines(keepends=True)
+        insertions: List[Tuple[int, str]] = []  # (0-based line index, text)
+
+        for scope in scopes.values():
+            body = scope.body
+            first = body[0]
+            if (
+                isinstance(first, ast.Expr)
+                and isinstance(first.value, ast.Constant)
+                and isinstance(first.value.value, str)
+                and len(body) > 1
+            ):
+                first = body[1]
+            if isinstance(scope, ast.Module):
+                # Module scope: place after the last top-level import.
+                last_import = max(
+                    (n.end_lineno for n in body if isinstance(n, (ast.Import, ast.ImportFrom))),
+                    default=0,
+                )
+                insertions.append((last_import, "client = OpenAI()\n"))
+            else:
+                indent = " " * first.col_offset
+                insertions.append((first.lineno - 1, f"{indent}client = OpenAI()\n"))
+
+        if "from openai import OpenAI" not in code:
+            import_line = next(
+                (n.end_lineno for n in tree.body if isinstance(n, ast.Import)
+                 and any(a.name == "openai" for a in n.names)),
+                0,
+            )
+            insertions.append((import_line, "from openai import OpenAI\n"))
+
+        for idx, text in sorted(insertions, key=lambda t: t[0], reverse=True):
+            if idx > 0 and idx <= len(lines) and not lines[idx - 1].endswith("\n"):
+                lines[idx - 1] += "\n"
+            lines.insert(idx, text)
+
+        patched = "".join(lines)
+        return patched.replace(f"openai.{legacy_attr}.create(", f"client.{modern_attr}.create(")
+
+    def _patch_method_sites(self, code: str, kinds: set) -> str:
+        """AST-positioned rewrites for pydantic V1 methods and DataFrame.append."""
+        tree = ast.parse(code)
+        aliases = self._build_import_map(tree)
+        pd_alias = next((k for k, v in aliases.items() if v == "pandas"), "pandas")
+        line_starts = self._line_starts(code)
+        edits: List[Tuple[int, int, str]] = []
+
+        for site in self._find_method_sites(tree, aliases):
+            if site["kind"] not in kinds:
+                continue
+            call: ast.Call = site["node"]
+            attr_node: ast.Attribute = call.func
+            attr_end = self._byte_offset(line_starts, attr_node.end_lineno, attr_node.end_col_offset)
+            if site["kind"] == "pydantic.BaseModel.parse_obj":
+                edits.append((attr_end - len("parse_obj"), attr_end, "model_validate"))
+            elif site["kind"] == "pydantic.BaseModel.dict":
+                edits.append((attr_end - len("dict"), attr_end, "model_dump"))
+            elif site["kind"] == "pandas.DataFrame.append" and len(call.args) == 1:
+                receiver = ast.get_source_segment(code, attr_node.value)
+                other = ast.get_source_segment(code, call.args[0])
+                # DataFrame.append accepted dicts/lists of rows; concat needs DataFrames.
+                if isinstance(call.args[0], ast.Dict):
+                    other = f"{pd_alias}.DataFrame([{other}])"
+                elif isinstance(call.args[0], ast.List):
+                    other = f"{pd_alias}.DataFrame({other})"
+                kw = "".join(
+                    f", {k.arg}={ast.get_source_segment(code, k.value)}"
+                    for k in call.keywords if k.arg == "ignore_index"
+                )
+                start = self._byte_offset(line_starts, call.lineno, call.col_offset)
+                end = self._byte_offset(line_starts, call.end_lineno, call.end_col_offset)
+                edits.append((start, end, f"{pd_alias}.concat([{receiver}, {other}]{kw})"))
+
+        return self._apply_byte_edits(code, edits) if edits else code
 
     def auto_patch_code(
         self, code: str, verifications: List[Dict[str, Any]]
     ) -> Tuple[str, List[Dict[str, Any]]]:
         """
-        Self-healing code replacement:
-        Substitutes all STALE patterns in code with verified modern replacements.
+        Self-healing code replacement for STALE claims with a verified replacement.
+
+        Guarantee: if the input parses, the output parses. Any patch that would
+        produce invalid Python is rolled back and the original code returned.
         """
+        stale = [
+            v for v in verifications
+            if v.get("is_stale") and v.get("patch") and v["patch"].get("replacement_pattern")
+        ]
+        if not stale:
+            return code, []
+
+        try:
+            ast.parse(code)
+            input_parses = True
+        except SyntaxError:
+            input_parses = False
+
         patched_code = code
-        applied_patches = []
+        applied_patches: List[Dict[str, Any]] = []
+        method_kinds: set = set()
 
-        for v in verifications:
-            if v.get("is_stale") and v.get("patch"):
-                patch = v["patch"]
-                old_pat = patch.get("deprecated_pattern")
-                new_pat = patch.get("replacement_pattern")
+        for v in stale:
+            patch = v["patch"]
+            claim = patch.get("claim") or v.get("claim", "")
+            old_pat = patch["deprecated_pattern"]
+            before = patched_code
 
-                if old_pat and old_pat in patched_code:
-                    # Specialized replacements
-                    if old_pat == "openai.ChatCompletion.create":
-                        # If client initialization not present, add it
-                        if "client = OpenAI()" not in patched_code:
-                            # Prepend import OpenAI if needed
-                            if "from openai import OpenAI" not in patched_code:
-                                patched_code = patched_code.replace("import openai", "from openai import OpenAI")
-                            # Add client init
-                            patched_code = re.sub(
-                                r"(def [A-Za-z0-9_]+\([^)]*\)[^:]*:\n)",
-                                r"\1    client = OpenAI()\n",
-                                patched_code,
-                                count=1,
-                            )
-                        patched_code = patched_code.replace("openai.ChatCompletion.create(", "client.chat.completions.create(")
-                        applied_patches.append(patch)
+            if claim == "openai.ChatCompletion.create" and input_parses:
+                patched_code = self._patch_openai_v0(patched_code, "ChatCompletion", "chat.completions")
+            elif claim == "openai.Completion.create" and input_parses:
+                patched_code = self._patch_openai_v0(patched_code, "Completion", "completions")
+            elif claim in ("pydantic.BaseModel.parse_obj", "pydantic.BaseModel.dict",
+                           "pandas.DataFrame.append"):
+                method_kinds.add(claim)
+                applied_patches.append(patch)
+                continue
+            elif claim == "stripe.Charge.create":
+                patched_code = patched_code.replace("stripe.Charge.create(", "stripe.PaymentIntent.create(")
+            elif old_pat.startswith("from ") and old_pat in patched_code:
+                patched_code = patched_code.replace(old_pat, patch["replacement_pattern"])
 
-                    elif old_pat == "openai.Completion.create":
-                        if "client = OpenAI()" not in patched_code:
-                            if "from openai import OpenAI" not in patched_code:
-                                patched_code = patched_code.replace("import openai", "from openai import OpenAI")
-                            patched_code = re.sub(
-                                r"(def [A-Za-z0-9_]+\([^)]*\)[^:]*:\n)",
-                                r"\1    client = OpenAI()\n",
-                                patched_code,
-                                count=1,
-                            )
-                        patched_code = patched_code.replace("openai.Completion.create(", "client.completions.create(")
-                        applied_patches.append(patch)
+            if patched_code != before:
+                applied_patches.append(patch)
 
-                    elif old_pat == "from langchain.chat_models import ChatOpenAI":
-                        patched_code = patched_code.replace(
-                            "from langchain.chat_models import ChatOpenAI",
-                            "from langchain_openai import ChatOpenAI",
-                        )
-                        applied_patches.append(patch)
+        if method_kinds and input_parses:
+            patched_code = self._patch_method_sites(patched_code, method_kinds)
+        elif method_kinds:
+            applied_patches = [p for p in applied_patches if p.get("claim") not in method_kinds]
 
-                    elif old_pat == "stripe.Charge.create":
-                        patched_code = patched_code.replace("stripe.Charge.create(", "stripe.PaymentIntent.create(")
-                        applied_patches.append(patch)
-
-                    else:
-                        patched_code = patched_code.replace(old_pat, new_pat)
-                        applied_patches.append(patch)
+        if input_parses:
+            try:
+                ast.parse(patched_code)
+            except SyntaxError:
+                return code, []
 
         return patched_code, applied_patches
 
     def audit_and_patch(
-        self, generated_code: str, tavily_api_key: Optional[str] = None
+        self,
+        generated_code: str,
+        tavily_api_key: Optional[str] = None,
+        dependency_pins: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         """
         Full lifecycle:
-        1. Extracts claims
-        2. Evaluates empirical freshness F(c_j)
-        3. Generates auto-patch if F(c_j) < 70
+        1. Extracts third-party claims
+        2. Evaluates empirical freshness F(c_j) (live claims verified concurrently)
+        3. Applies verified auto-patches where F(c_j) < 70
         """
         claims = self.extract_code_claims(generated_code)
-        verifications = []
-        for c in claims:
-            v = self.verify_claim_freshness(c["claim"], tavily_api_key=tavily_api_key)
-            verifications.append(v)
+        api_key = tavily_api_key or self.tavily_api_key
+
+        if self._has_live_key(api_key) and len(claims) > 1:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(claims))) as pool:
+                verifications = list(pool.map(
+                    lambda c: self.verify_claim_freshness(
+                        c["claim"], tavily_api_key=api_key, dependency_pins=dependency_pins
+                    ),
+                    claims,
+                ))
+        else:
+            verifications = [
+                self.verify_claim_freshness(
+                    c["claim"], tavily_api_key=api_key, dependency_pins=dependency_pins
+                )
+                for c in claims
+            ]
 
         patched_code, applied_patches = self.auto_patch_code(generated_code, verifications)
         all_fresh = all(not v.get("is_stale", False) for v in verifications)
