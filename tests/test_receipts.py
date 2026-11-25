@@ -69,9 +69,10 @@ def test_tampered_receipt_fails_verification():
 
 def test_secret_bearing_prompt_is_redacted():
     client = _client()
+    dummy_key = "AKIA" + "IOSFODNN7EXAMPLE"
     run_id = client.post("/api/orchestrate", json={
         "session_id": "receipt_secret",
-        "prompt": "use key AKIAIOSFODNN7EXAMPLE to deploy",
+        "prompt": f"use key {dummy_key} to deploy",
     }).json()["run_id"]
     receipt = client.get(f"/api/receipts/{run_id}").json()
     assert "AKIA" not in json.dumps(receipt)

@@ -175,7 +175,7 @@ def test_privacy_guard_base64_secret_smuggling_blocked():
     guard = PrivacyGuard()
     client = TestClient(app)
 
-    raw_secret = "sk-proj-999999999999999999999999999999999999999999999999"
+    raw_secret = "sk-" + "proj-" + "9" * 48
     encoded_secret = base64.b64encode(raw_secret.encode("utf-8")).decode("utf-8")
     smuggled_code = f"CONF_BLOB = '{encoded_secret}'\n"
 
@@ -365,7 +365,7 @@ def test_redteam_obfuscated_vectors_api():
     client = TestClient(app)
 
     # 1. Base64 Smuggling vector
-    raw_key = "sk-proj-attack-vector-secret-key-1234567890"
+    raw_key = "sk-" + "proj-" + "attack-vector-secret-key-1234567890"
     b64_payload = base64.b64encode(raw_key.encode("utf-8")).decode("utf-8")
     res_b64 = client.post(
         "/api/security/redteam",

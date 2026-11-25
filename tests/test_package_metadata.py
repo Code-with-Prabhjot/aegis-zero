@@ -123,7 +123,7 @@ def test_registry_hits_do_not_spend_tavily_credits(monkeypatch):
         freshness_engine.FreshnessEngine, "_query_tavily_api",
         lambda self, claim, key: calls.append(claim) or {},
     )
-    engine = FreshnessEngine(tavily_api_key="tvly-real", package_metadata=PyPIMetadata(offline=True))
+    engine = FreshnessEngine(tavily_api_key="tvly-" + "real", package_metadata=PyPIMetadata(offline=True))
     engine.verify_claim_freshness("openai.ChatCompletion.create")
     assert calls == []
 

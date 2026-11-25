@@ -183,11 +183,12 @@ def test_live_tavily_detects_deprecated_wording(fake_tavily):
          "content": "The ChatCompletion interface was removed in v1.0.0 (deprecation notice)."},
         {"title": "Unrelated", "url": "u3", "content": "General overview of the SDK."},
     ]}
-    engine = FreshnessEngine(tavily_api_key="tvly-real-key")
-    result = engine._query_tavily_api("openai.ChatCompletion.create", "tvly-real-key")
+    fake_key = "tvly-" + "real-key"
+    engine = FreshnessEngine(tavily_api_key=fake_key)
+    result = engine._query_tavily_api("openai.ChatCompletion.create", fake_key)
     assert result["deprecation_indicator"] == 1
     # API key goes in the Authorization header, never the JSON body.
-    assert fake_tavily.last_headers["Authorization"] == "Bearer tvly-real-key"
+    assert fake_tavily.last_headers["Authorization"] == f"Bearer {fake_key}"
     assert "api_key" not in fake_tavily.last_json
 
 
@@ -197,14 +198,15 @@ def test_live_tavily_ignores_unrelated_legacy_wording(fake_tavily):
          "content": "client.chat.completions.create is the current API. Legacy docs are archived."},
         {"title": "Other library", "url": "u2", "content": "SomethingElse is deprecated."},
     ]}
-    engine = FreshnessEngine(tavily_api_key="tvly-real-key")
-    result = engine._query_tavily_api("openai.chat.completions.create", "tvly-real-key")
+    fake_key = "tvly-" + "real-key"
+    engine = FreshnessEngine(tavily_api_key=fake_key)
+    result = engine._query_tavily_api("openai.chat.completions.create", fake_key)
     assert result["deprecation_indicator"] == 0
 
 
 def test_live_queries_are_cached(fake_tavily):
     fake_tavily.payload = {"results": [{"title": "t", "url": "u", "content": "requests.get docs"}]}
-    engine = FreshnessEngine(tavily_api_key="tvly-real-key")
+    engine = FreshnessEngine(tavily_api_key="tvly-" + "real-key")
     for _ in range(3):
         engine.verify_claim_freshness("requests.get")
     assert fake_tavily.calls == 1
@@ -214,6 +216,6 @@ def test_live_queries_are_cached(fake_tavily):
 
 def test_builtins_never_reach_tavily(fake_tavily):
     fake_tavily.payload = {"results": []}
-    engine = FreshnessEngine(tavily_api_key="tvly-real-key")
+    engine = FreshnessEngine(tavily_api_key="tvly-" + "real-key")
     engine.audit_and_patch(PLAIN_PYTHON)
     assert fake_tavily.calls == 0

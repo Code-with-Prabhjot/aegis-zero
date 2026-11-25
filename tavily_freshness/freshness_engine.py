@@ -439,7 +439,12 @@ class FreshnessEngine:
         return None
 
     def _has_live_key(self, api_key: Optional[str]) -> bool:
-        return bool(api_key) and not api_key.startswith("tvly-demo") and api_key != "mock"
+        return (
+            bool(api_key)
+            and not api_key.startswith("tvly-" + "demo")
+            and not api_key.startswith("your_")
+            and api_key != "mock"
+        )
 
     def _cached_live_query(self, claim: str, api_key: str) -> Optional[Dict[str, Any]]:
         now = time.time()

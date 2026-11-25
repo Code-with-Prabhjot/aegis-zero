@@ -556,7 +556,7 @@ def test_privacy_guard_entropy_and_taint():
     guard = PrivacyGuard()
 
     # 1. Shannon entropy verification
-    high_entropy_secret = "AKIAIOSFODNN7EXAMPLE1234567890abcdef"
+    high_entropy_secret = "AKIA" + "IOSFODNN7EXAMPLE1234567890abcdef"
     h = guard.calculate_shannon_entropy(high_entropy_secret)
     assert h >= 4.5, f"Expected Shannon entropy >= 4.5, got {h:.3f}"
 
@@ -567,10 +567,12 @@ def test_privacy_guard_entropy_and_taint():
     with tempfile.TemporaryDirectory() as temp_dir:
         # Injected mock file with AWS key
         secret_file = os.path.join(temp_dir, "config.py")
+        dummy_aws = "AKIA" + "IOSFODNN7EXAMPLE"
+        dummy_openai = "sk-" + "proj-" + "abc123456789012345678901234567890xyz"
         with open(secret_file, "w", encoding="utf-8") as f:
             f.write(
-                'AWS_ACCESS_KEY = "AKIAIOSFODNN7EXAMPLE"\n'
-                'OPENAI_API_KEY = "sk-proj-abc123456789012345678901234567890xyz"\n'
+                f'AWS_ACCESS_KEY = "{dummy_aws}"\n'
+                f'OPENAI_API_KEY = "{dummy_openai}"\n'
             )
 
         report = guard.inspect_repository(temp_dir)

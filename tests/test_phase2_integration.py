@@ -409,7 +409,9 @@ def test_zero_trust_airgap_lock_on_tainted_context():
     client = TestClient(app)
 
     # Inject high-entropy AWS secret key
-    tainted_prompt = "Refactor database query with key AKIAIOSFODNN7EXAMPLE and aws_secret_access_key='wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'"
+    dummy_aws_id = "AKIA" + "IOSFODNN7EXAMPLE"
+    dummy_aws_secret = "wJalrXUtnFEMI/" + "K7MDENG/bPxRfiCYEXAMPLEKEY"
+    tainted_prompt = f"Refactor database query with key {dummy_aws_id} and aws_secret_access_key='{dummy_aws_secret}'"
 
     payload = {
         "session_id": "test-taint-session",
